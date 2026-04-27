@@ -1,6 +1,6 @@
 # ChatRoom
 
-多端实时聊天室，Monorepo。
+多端实时聊天室。
 
 ```
 chatroom/
