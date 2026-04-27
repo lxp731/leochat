@@ -1,0 +1,12 @@
+services:
+  backend:
+    build:
+      context: .
+    container_name: chatroom-backend
+#     ports:
+#       - "5000:5000"
+    networks:
+      - chatnet
+networks:
+  chatnet:
+    external: true

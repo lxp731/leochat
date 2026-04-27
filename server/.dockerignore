@@ -1,0 +1,12 @@
+.idea/
+.venv/
+.vscode/
+uv.lock
+.git
+__pycache__
+docker-compose.yaml
+Dockerfile
+.dockerignore
+LICENSE
+README.md
+images/

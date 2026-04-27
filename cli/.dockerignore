@@ -1,0 +1,10 @@
+.venv/
+.gitignore
+.dockerignore
+.python-version
+images/
+Dockerfile
+LICENCE
+pyproject.toml
+README.md
+uv.lock

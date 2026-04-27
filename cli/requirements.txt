@@ -1,0 +1,16 @@
+bidict==0.23.1
+certifi==2025.4.26
+charset-normalizer==3.4.2
+h11==0.16.0
+idna==3.10
+nuitka==2.7.5
+ordered-set==4.1.0
+prompt-toolkit==3.0.51
+python-engineio==4.12.1
+python-socketio[client]>=5.16.1
+requests==2.32.3
+simple-websocket==1.1.0
+urllib3==2.4.0
+wcwidth==0.2.13
+wsproto==1.2.0
+zstandard==0.23.0

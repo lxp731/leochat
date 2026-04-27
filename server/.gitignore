@@ -1,0 +1,6 @@
+uv.lock
+.venv/
+.idea/
+*.build/
+*.dist/
+nuitka-crash-report.xml

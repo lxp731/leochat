@@ -1,0 +1,12 @@
+[project]
+name = "chatroom-cli"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "nuitka>=2.7.5",
+    "prompt-toolkit>=3.0.51",
+    "python-socketio[client]>=5.16.1",
+    "requests>=2.32.3",
+]
