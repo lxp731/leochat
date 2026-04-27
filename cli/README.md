@@ -30,3 +30,7 @@ uv run python app.py
 | `SERVER_PORT` | `5000` |
 
 或在项目根目录创建 `.env` 文件统一配置。
+
+## 效果图
+
+![cli-result](./assets/result.png)

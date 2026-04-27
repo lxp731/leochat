@@ -119,6 +119,16 @@ docker compose up -d
 
 ---
 
+## 界面预览
+
+### Web 端 (Server)
+
+![server](server/assets/result.png)
+
+### 终端客户端 (CLI)
+
+![cli](cli/assets/result.png)
+
 ## License
 
 MIT
