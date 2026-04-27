@@ -4,3 +4,4 @@ uv.lock
 *.build/
 *.dist/
 nuitka-crash-report.xml
+.vscode/

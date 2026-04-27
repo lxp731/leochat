@@ -2,38 +2,78 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Chat Room</title>
-  <script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script> 
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; padding: 16px; }
+    h1 { margin-bottom: 12px; color: #333; }
+    #chat {
+      border: 1px solid #ddd; border-radius: 8px; height: 400px; overflow-y: scroll;
+      padding: 12px; background: #fafafa; margin-bottom: 12px;
+    }
+    #chat p { margin: 4px 0; word-break: break-word; }
+    .sys { color: #888; font-style: italic; }
+    .err { color: #e74c3c; }
+    #controls { display: flex; gap: 8px; }
+    #controls input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+    #username { width: 120px; flex-shrink: 0; }
+    #message { flex: 1; }
+    #controls button {
+      padding: 8px 16px; background: #3498db; color: white; border: none;
+      border-radius: 6px; cursor: pointer; font-size: 14px;
+    }
+  </style>
 </head>
 <body>
-  <h1>Simple Chat Room</h1>
-
-  <div id="chat" style="border:1px solid #ccc; height:300px; overflow-y:scroll; padding:10px;">
+  <h1>Chat Room</h1>
+  <div id="chat"></div>
+  <div id="controls">
+    <input type="text" id="username" placeholder="Name" maxlength="20">
+    <input type="text" id="message" placeholder="Type a message..." maxlength="2000">
+    <button id="sendBtn">Send</button>
   </div>
 
-  <input type="text" id="username" placeholder="Your name">
-  <input type="text" id="message" placeholder="Type a message">
-  <button onclick="sendMessage()">Send</button>
-
+  <script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
   <script>
     const socket = io();
+    const chatDiv = document.getElementById('chat');
+    const msgInput = document.getElementById('message');
+    const userInput = document.getElementById('username');
 
-    // 接收消息
-    socket.on('message', function(data) {
-      const chatDiv = document.getElementById('chat');
-      chatDiv.innerHTML += `<p><b>${data.user}:</b> ${data.text}</p>`;
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function appendMsg(cls, user, text) {
+      const p = document.createElement('p');
+      p.className = cls || '';
+      if (user) {
+        const b = document.createElement('b');
+        b.textContent = user + ': ';
+        p.appendChild(b);
+      }
+      p.appendChild(document.createTextNode(text));
+      chatDiv.appendChild(p);
       chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+
+    socket.on('system', data => appendMsg('sys', null, data.text));
+    socket.on('error', data => appendMsg('err', null, data.text));
+    socket.on('message', data => {
+      appendMsg('', data.user, data.text);
     });
 
-    // 发送消息
     function sendMessage() {
-      const user = document.getElementById('username').value.trim();
-      const text = document.getElementById('message').value.trim();
-      if (!user || !text) return alert("Please enter username and message.");
-
+      const user = userInput.value.trim();
+      const text = msgInput.value.trim();
+      if (!user || !text) return;
       socket.emit('send_message', { user, text });
-      document.getElementById('message').value = '';
+      msgInput.value = '';
     }
+
+    msgInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
+    document.getElementById('sendBtn').addEventListener('click', sendMessage);
   </script>
 </body>
 </html>

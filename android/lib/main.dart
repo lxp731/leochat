@@ -1,63 +1,74 @@
 import 'package:flutter/material.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 
+/// 服务器地址 — 通过 build 参数或环境配置
+const String kServerUrl = String.fromEnvironment('CHAT_SERVER', defaultValue: 'http://10.0.2.2:5000');
+
 void main() {
-  runApp(ChatApp());
+  runApp(const ChatApp());
 }
 
 class ChatApp extends StatelessWidget {
+  const ChatApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Chat',
+      title: 'ChatRoom',
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(primarySwatch: Colors.blue),
-      home: UsernameScreen(),
+      home: const UsernameScreen(),
     );
   }
 }
 
+// ── 用户名输入 ────────────────────────────────────────────
+
 class UsernameScreen extends StatefulWidget {
+  const UsernameScreen({super.key});
+
   @override
-  _UsernameScreenState createState() => _UsernameScreenState();
+  State<UsernameScreen> createState() => _UsernameScreenState();
 }
 
 class _UsernameScreenState extends State<UsernameScreen> {
-  final TextEditingController _controller = TextEditingController();
+  final _controller = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Enter Your Name')),
+      appBar: AppBar(title: const Text('Enter Your Name')),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             TextField(
               controller: _controller,
-              decoration: InputDecoration(
+              maxLength: 20,
+              decoration: const InputDecoration(
                 labelText: 'Username',
                 border: OutlineInputBorder(),
               ),
             ),
-            SizedBox(height: 20),
+            const SizedBox(height: 20),
             ElevatedButton(
               onPressed: () {
                 final username = _controller.text.trim();
-                if (username.isNotEmpty) {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => ChatScreen(username: username),
-                    ),
-                  );
-                } else {
+                if (username.isEmpty) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text("Please enter a username")),
+                    const SnackBar(content: Text('Please enter a username')),
                   );
+                  return;
                 }
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ChatScreen(username: username),
+                  ),
+                );
               },
-              child: Text('Join Chat'),
+              child: const Text('Join Chat'),
             ),
           ],
         ),
@@ -72,80 +83,88 @@ class _UsernameScreenState extends State<UsernameScreen> {
   }
 }
 
+// ── 聊天主界面 ────────────────────────────────────────────
+
 class ChatScreen extends StatefulWidget {
   final String username;
-
-  ChatScreen({required this.username});
+  const ChatScreen({super.key, required this.username});
 
   @override
-  _ChatScreenState createState() => _ChatScreenState();
+  State<ChatScreen> createState() => _ChatScreenState();
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  late IO.Socket socket;
-  final List<Map<String, dynamic>> messages = [];
-  final TextEditingController _controller = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
+  late IO.Socket _socket;
+  final List<Map<String, dynamic>> _messages = [];
+  final _msgCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+  bool _connected = false;
 
   @override
   void initState() {
     super.initState();
-    _connectToSocket();
+    _connect();
   }
 
-  void _connectToSocket() {
-    socket = IO.io('http://123.57.54.42:5000', <String, dynamic>{
+  void _connect() {
+    _socket = IO.io(kServerUrl, <String, dynamic>{
       'transports': ['websocket'],
       'autoConnect': false,
     });
 
-    socket.connect();
-
-    socket.onConnect((_) {
-      print('Connected to server');
-      socket.emit('message', {
-        'user': widget.username,
-        'text': 'has joined the chat.',
-      });
+    _socket.onConnect((_) {
+      if (!mounted) return;
+      setState(() => _connected = true);
     });
 
-    socket.onDisconnect((_) {
-      print('Disconnected from server');
+    _socket.onDisconnect((_) {
+      if (!mounted) return;
+      setState(() => _connected = false);
     });
 
-    socket.on('message', (data) {
-      // 确保 data 是 Map 类型且包含 user 和 text 字段
+    _socket.on('message', (data) {
+      if (!mounted) return;
       if (data is Map) {
-        setState(() {
-          messages.add(Map<String, dynamic>.from(data));
-        });
-        // 自动滚动到底部，显示最新消息
+        setState(() => _messages.add(Map<String, dynamic>.from(data)));
         _scrollToBottom();
       }
     });
+
+    _socket.on('system', (data) {
+      if (!mounted) return;
+      if (data is Map) {
+        setState(() => _messages.add({
+          'user': '',
+          'text': data['text'] ?? '',
+          '_system': true,
+        }));
+        _scrollToBottom();
+      }
+    });
+
+    _socket.on('error', (data) {
+      if (!mounted) return;
+      final text = data is Map ? data['text'] ?? 'Unknown error' : '$data';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    });
+
+    _socket.connect();
   }
 
   void _sendMessage() {
-    final text = _controller.text.trim();
-    if (text.isNotEmpty) {
-      final message = {
-        'user': widget.username,
-        'text': text,
-      };
-      socket.emit('send_message', message);
-      _controller.clear();
-      _scrollToBottom();
-      // 不要在这里调用 setState 添加消息，等待服务器广播
-    }
+    final text = _msgCtrl.text.trim();
+    if (text.isEmpty || !_connected) return;
+    _socket.emit('send_message', {'user': widget.username, 'text': text});
+    _msgCtrl.clear();
+    _scrollToBottom();
   }
-
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: Duration(milliseconds: 300),
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(
+          _scrollCtrl.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
       }
@@ -154,92 +173,121 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    socket.emit('message', {
-      'user': widget.username,
-      'text': 'has left the chat.',
-    });
-    socket.disconnect();
-    socket.dispose();
-    _controller.dispose();
-    _scrollController.dispose();
+    _socket.disconnect();
+    _socket.dispose();
+    _msgCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
-  }
-
-  Future<bool> _onWillPop() async {
-    // 断开连接后再返回
-    socket.emit('message', {
-      'user': widget.username,
-      'text': 'has left the chat.',
-    });
-    socket.disconnect();
-    socket.dispose();
-    return true;
   }
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: _onWillPop,
+    return PopScope(
+      canPop: true,
       child: Scaffold(
         appBar: AppBar(
-          title: Text('Chat - ${widget.username}'),
-          leading: IconButton(
-            icon: Icon(Icons.arrow_back),
-            onPressed: () async {
-              await _onWillPop();
-              Navigator.of(context).pop();
-            },
-          ),
+          title: Text('Chat — ${widget.username}'),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Icon(
+                Icons.circle,
+                size: 10,
+                color: _connected ? Colors.green : Colors.red,
+              ),
+            ),
+          ],
         ),
         body: Column(
           children: [
             Expanded(
               child: ListView.builder(
-                controller: _scrollController,
-                itemCount: messages.length,
-                itemBuilder: (context, index) {
-                  final msg = messages[index];
+                controller: _scrollCtrl,
+                itemCount: _messages.length,
+                itemBuilder: (ctx, i) {
+                  final msg = _messages[i];
+                  if (msg['_system'] == true) {
+                    return _SystemBubble(text: msg['text'] ?? '');
+                  }
                   final isMe = msg['user'] == widget.username;
-                  return MessageBubble(message: msg, isMe: isMe);
+                  return _MessageBubble(message: msg, isMe: isMe);
                 },
               ),
             ),
-            Divider(height: 1),
-            Container(
-              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              color: Colors.white,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _controller,
-                      onSubmitted: (_) => _sendMessage(),
-                      decoration: InputDecoration(
-                        hintText: "Type a message...",
-                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        filled: true,
-                        fillColor: Colors.grey.shade100,
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.blue,
-                      shape: BoxShape.circle,
-                    ),
-                    child: IconButton(
-                      icon: Icon(Icons.send, color: Colors.white),
-                      onPressed: _sendMessage,
-                    ),
-                  ),
-                ],
+            const Divider(height: 1),
+            _buildInputBar(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInputBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      color: Colors.white,
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _msgCtrl,
+              maxLength: 2000,
+              buildCounter: (_, {required currentLength, maxLength, required isFocused}) => null,
+              onSubmitted: (_) => _sendMessage(),
+              decoration: InputDecoration(
+                hintText: 'Type a message...',
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(24),
+                  borderSide: BorderSide(color: Colors.grey.shade300),
+                ),
+                filled: true,
+                fillColor: Colors.grey.shade100,
               ),
             ),
+          ),
+          const SizedBox(width: 8),
+          CircleAvatar(
+            backgroundColor: _connected ? Colors.blue : Colors.grey,
+            child: IconButton(
+              icon: const Icon(Icons.send, color: Colors.white, size: 20),
+              onPressed: _connected ? _sendMessage : null,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── 消息气泡 ──────────────────────────────────────────────
+
+class _MessageBubble extends StatelessWidget {
+  final Map<String, dynamic> message;
+  final bool isMe;
+
+  const _MessageBubble({required this.message, required this.isMe});
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        decoration: BoxDecoration(
+          color: isMe ? Colors.blue.shade100 : Colors.grey.shade300,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+        child: Column(
+          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            if (!isMe)
+              Text(message['user'] ?? '',
+                   style: const TextStyle(fontSize: 12, color: Colors.black54)),
+            const SizedBox(height: 2),
+            Text(message['text'] ?? '', style: const TextStyle(fontSize: 16)),
           ],
         ),
       ),
@@ -247,38 +295,23 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class MessageBubble extends StatelessWidget {
-  final Map<String, dynamic> message;
-  final bool isMe;
+// ── 系统消息 ──────────────────────────────────────────────
 
-  MessageBubble({required this.message, required this.isMe});
+class _SystemBubble extends StatelessWidget {
+  final String text;
+  const _SystemBubble({required this.text});
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+    return Center(
       child: Container(
-        margin: EdgeInsets.symmetric(vertical: 4, horizontal: 12),
-        padding: EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         decoration: BoxDecoration(
-          color: isMe ? Colors.blue[100] : Colors.grey[300],
-          borderRadius: BorderRadius.circular(12),
+          color: Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(10),
         ),
-        child: Column(
-          crossAxisAlignment:
-          isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          children: [
-            Text(
-              message['user'] ?? '',
-              style: TextStyle(fontSize: 12, color: Colors.black54),
-            ),
-            SizedBox(height: 4),
-            Text(
-              message['text'] ?? '',
-              style: TextStyle(fontSize: 16),
-            ),
-          ],
-        ),
+        child: Text(text, style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
       ),
     );
   }
