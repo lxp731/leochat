@@ -1,31 +1,32 @@
-This part provide a chatroom client for linux users with command-line.
+# ChatRoom CLI
 
-### How to start
+基于 Rich + prompt_toolkit 的终端聊天客户端。
 
-1. Build the docker image, slove the network stuff by yourself.
-
-```bash
-docker build -t chatroom-cli:latest .
-```
-
-2. Just run this command, the container won't run, but it's not a error.
+## 启动
 
 ```bash
-docker run -dit --name chatroom-cli chatroom-cli:latest
+cd cli
+uv sync
+uv run python app.py
 ```
 
-3. Copy the executable file form container.
+输入昵称后即可聊天。
 
-```bash
-docker cp chatroom-cli:/app/app.bin .
-```
+## 命令
 
-4. Directly run app.bin
+| 命令 | 作用 |
+|------|------|
+| `/exit` `/quit` | 退出 |
+| `/users` | 显示在线用户 |
+| `/help` | 帮助 |
+| `Ctrl+C` | 退出 |
 
-```bash
-./app.bin
-```
+## 配置
 
-### Effect picture
+| 环境变量 | 默认值 |
+|----------|--------|
+| `CHAT_SERVER` | `http://127.0.0.1:5000` |
+| `SERVER_IP` | `127.0.0.1` |
+| `SERVER_PORT` | `5000` |
 
-![Effect picture](./assets/result.png)
+或在项目根目录创建 `.env` 文件统一配置。

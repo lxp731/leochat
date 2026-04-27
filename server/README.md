@@ -1,42 +1,31 @@
-This part allow you to deploy the chatroom server.
+# ChatRoom Server
 
-### How to start
+Flask + Socket.IO 实时聊天服务器。
 
-#### Source code
-1. Clone the project
-    ```gitexclude
-    https://gitee.com/nustarain/chatroom-server.git
-    ```
+## 启动
 
-2. Install dependencies
+```bash
+cd server
+uv sync
+uv run python app.py
+```
 
-    * For uv
-    ```bash
-    uv sync
-    ```
+服务运行在 `http://0.0.0.0:5000`，浏览器打开即可使用 Web 客户端。
 
-    * For pip
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-3. Start the server
-   ```bash
-   source .venv/bin/activate
-   python app.py 
-   ```
-   
-The server will start at http://localhost:5000.
-
-#### Docker
+## Docker
 
 ```bash
 docker compose up -d
 ```
 
-If everything goes well, you will get a named `chatroom-server-backend` image and a named `chatroom-backend` container.  
-Access `http://127.0.0.1:5000` to check.
+## 配置
 
-### Effect picture
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `SECRET_KEY` | 随机 | Flask 密钥 |
+| `CHAT_PORT` | `5000` | 监听端口 |
+| `CHAT_DEBUG` | `false` | 调试模式 |
 
-![Effect picture](./assets/result.png)
+## API
+
+Socket.IO 事件协议见项目根目录 [README](../README.md#协议设计)。
