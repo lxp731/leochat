@@ -1,7 +1,7 @@
 """
 ChatRoom CLI — 终端聊天客户端
 ═══════════════════════════════════════════════════════════
-自动检测终端能力，Rich 渲染不可用时降级为纯文本。
+prompt_toolkit + 纯 ANSI 渲染，零额外依赖。
 """
 import os
 import sys
@@ -10,48 +10,29 @@ from datetime import datetime, timezone, timedelta
 
 import socketio
 from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.styles import Style
-from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.shortcuts import print_formatted_text
+from prompt_toolkit.styles import Style
 
+# ── 配置 ──────────────────────────────────────────────────
 CST = timezone(timedelta(hours=8))
 SERVER_URL = os.environ.get("CHAT_SERVER", "http://127.0.0.1:5000")
 RECONNECT_BASE = 2
 RECONNECT_MAX = 60
 
-# ── Rich: 默认关闭，CHAT_RICH=1 开启（需终端完整支持 ANSI） ─
-_rich_ok = os.environ.get("CHAT_RICH", "").lower() in ("1", "true", "yes")
-if _rich_ok:
-    from rich.console import Console
-    from rich.panel import Panel
-    from rich.table import Table
-    from rich.text import Text
-    from rich.align import Align
-    from rich.box import ROUNDED, SIMPLE
-    _rich_console = Console(highlight=False)
+_STYLE = Style.from_dict({"prompt": "bold green"})
 
-# prompt_toolkit 样式（轻量，始终可用）
-_PROMPT_STYLE = Style.from_dict({"prompt": "bold green"})
-
-# ── 颜色常量（纯 ANSI，Rich 不可用时的降级） ────────────
-C_RESET = "\033[0m"
-C_BOLD = "\033[1m"
-C_DIM = "\033[2m"
-C_RED = "\033[31m"
-C_GREEN = "\033[32m"
-C_YELLOW = "\033[33m"
-C_CYAN = "\033[36m"
-C_BOLD_CYAN = "\033[1;36m"
-C_BOLD_GREEN = "\033[1;32m"
-C_DIM_YELLOW = "\033[2;33m"
-C_DIM_RED = "\033[2;31m"
-
-
-def _colorize(text: str, color: str) -> str:
-    """用纯 ANSI 包裹文字，在 Rich 不可用时使用."""
-    return f"{color}{text}{C_RESET}"
+# ── ANSI 颜色 ─────────────────────────────────────────────
+R = "\033[0m"       # reset
+B = "\033[1m"       # bold
+D = "\033[2m"       # dim
+RED = "\033[31m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+CYAN = "\033[36m"
+BC = "\033[1;36m"   # bold cyan
 
 
 class ChatClient:
@@ -62,7 +43,6 @@ class ChatClient:
         self.connected = False
         self._reconnect_attempt = 0
         self._users: list[str] = []
-        self._header_printed = False
         self._register_events()
 
     def _now(self) -> str:
@@ -74,13 +54,14 @@ class ChatClient:
             self.connected = True
             self._reconnect_attempt = 0
             self.sio.emit("join", {"user": self.username})
-            self._print_header()
-            self._print_status("已连接到服务器", "green")
+            self._say("", f"{BC}ChatRoom / {R}{B}{self.username}{R}  "
+                     f"{GREEN}●{R} {D}{SERVER_URL}{R}")
+            self._say("green", "已连接到服务器")
 
         @self.sio.event
         def disconnect():
             self.connected = False
-            self._print_status("连接断开", "red")
+            self._say("red", "连接断开")
             if not self.exit_flag:
                 self._try_reconnect()
 
@@ -90,23 +71,23 @@ class ChatClient:
 
         @self.sio.on("system")
         def on_system(data):
-            self._print_status(data.get("text", ""), "yellow")
+            self._say("yellow", data.get("text", ""))
 
         @self.sio.on("error")
         def on_error(data):
-            self._print_status(data.get("text", "错误"), "red")
+            self._say("red", data.get("text", "错误"))
 
         @self.sio.on("userlist")
         def on_userlist(data):
             self._users = list(data.get("users", []))
             if self._users:
-                self._print_userlist()
+                self._print_users()
 
     def _try_reconnect(self) -> None:
         def reconnect():
             delay = min(RECONNECT_BASE * (2 ** self._reconnect_attempt), RECONNECT_MAX)
             self._reconnect_attempt += 1
-            self._print_status(f"将在 {delay}s 后重连 (第 {self._reconnect_attempt} 次)…", "yellow")
+            self._say("yellow", f"将在 {delay}s 后重连 (第 {self._reconnect_attempt} 次)…")
             import time
             time.sleep(delay)
             if self.exit_flag:
@@ -114,98 +95,46 @@ class ChatClient:
             try:
                 self.sio.connect(SERVER_URL)
             except Exception as exc:
-                self._print_status(f"重连失败: {exc}", "red")
+                self._say("red", f"重连失败: {exc}")
                 if not self.exit_flag:
                     self._try_reconnect()
+        threading.Thread(target=reconnect, daemon=True).start()
 
-        t = threading.Thread(target=reconnect, daemon=True)
-        t.start()
+    # ── 输出 ──────────────────────────────────────────
 
-    # ── 输出（自动选择 Rich 或纯 ANSI） ────────────────
-
-    def _print_header(self) -> None:
-        if self._header_printed:
-            return
-        self._header_printed = True
-        status = "●" if self.connected else "○"
-        if _rich_ok:
-            dot = Text("● " if self.connected else "○ ", style="bold green" if self.connected else "bold red")
-            title = Text.assemble(
-                ("ChatRoom / ", "bold cyan"),
-                (self.username, "bold white"),
-                ("    ", ""),
-                dot,
-                (SERVER_URL, "dim"),
-            )
-            _rich_console.print(Panel(title, box=ROUNDED, border_style="cyan"))
-        else:
-            header = (
-                f"{C_BOLD_CYAN}ChatRoom / {C_RESET}"
-                f"{C_BOLD}{self.username}{C_RESET}    "
-                f"{C_BOLD_GREEN}{status}{C_RESET} "
-                f"{C_DIM}{SERVER_URL}{C_RESET}"
-            )
-            print_formatted_text(FormattedText([("", header)]))
-
-    def _print_status(self, text: str, color: str) -> None:
-        colors = {"green": C_GREEN, "red": C_RED, "yellow": C_YELLOW}
-        c = colors.get(color, C_RESET)
+    def _say(self, color: str, text: str) -> None:
+        """打印一条带颜色的消息."""
         print_formatted_text(
-            FormattedText([(f"fg:{color}", f"  ─ {text}")]),
-            style=_PROMPT_STYLE,
+            FormattedText([(f"bold ansi{color}" if color else "", f"  {text}")]),
+            style=_STYLE,
         )
 
     def _print_msg(self, data: dict) -> None:
         user = data.get("user", "???")
         text = data.get("text", "")
         ts = data.get("time", "")
-        if _rich_ok:
-            time_part = Text(f" {ts} ", style="dim") if ts else Text("")
-            line = Text.assemble(
-                time_part,
-                ("  ", ""),
-                (f"{user}", "bold cyan"),
-                (f"  {text}", ""),
-            )
-            _rich_console.print(Align.left(line))
+        parts = []
+        if ts:
+            parts.append(("", f" {D}{ts}{R} "))
         else:
-            ts_str = f"{C_DIM}{ts}{C_RESET} " if ts else ""
-            print_formatted_text(
-                FormattedText([
-                    ("", f"  {ts_str}"),
-                    ("bold ansicyan", f"{user}"),
-                    ("", f"  {text}"),
-                ]),
-                style=_PROMPT_STYLE,
-            )
+            parts.append(("", " "))
+        parts.append(("bold ansicyan", user))
+        parts.append(("", f"  {text}"))
+        print_formatted_text(FormattedText(parts), style=_STYLE)
 
-    def _print_userlist(self) -> None:
-        lines = []
+    def _print_users(self) -> None:
+        print_formatted_text(
+            FormattedText([("bold ansicyan", "  ── 在线 ──")]),
+            style=_STYLE,
+        )
         for u in self._users:
-            marker = "[*]" if u == self.username else "[ ]"
-            lines.append(f"    {marker} {u}")
-        if _rich_ok:
-            table = Table(box=SIMPLE, show_header=False, padding=(0, 2))
-            table.add_column(style="white")
-            for u in self._users:
-                icon = "●" if u == self.username else "○"
-                name = u
-                table.add_row(f"{icon} {name}")
-            _rich_console.print(
-                Panel(table, title="在线", border_style="cyan", box=ROUNDED)
-            )
-        else:
+            me = u == self.username
+            dot = f"{GREEN}●{R}" if me else f"{D}○{R}"
+            name = f"{B}{u}{R}" if me else u
             print_formatted_text(
-                FormattedText([("bold ansicyan", "  👥 在线用户:")]),
-                style=_PROMPT_STYLE,
+                FormattedText([("", f"    {dot} {name}")]),
+                style=_STYLE,
             )
-            for u in self._users:
-                marker = f"{C_BOLD_GREEN}●{C_RESET}" if u == self.username else f"{C_DIM}○{C_RESET}"
-                name = f"{C_BOLD if u == self.username else ''}{u}{C_RESET if u == self.username else ''}"
-                print_formatted_text(
-                    FormattedText([("", f"    {marker} {name}")]),
-                    style=_PROMPT_STYLE,
-                )
 
     # ── 运行 ──────────────────────────────────────────
 
@@ -215,7 +144,7 @@ class ChatClient:
         except Exception as exc:
             print_formatted_text(
                 FormattedText([("bold ansired", f"无法连接服务器: {exc}")]),
-                style=_PROMPT_STYLE,
+                style=_STYLE,
             )
             sys.exit(1)
 
@@ -227,7 +156,7 @@ class ChatClient:
                     try:
                         line = session.prompt(
                             [("class:prompt", f"You ({self.username}) > ")],
-                            style=_PROMPT_STYLE,
+                            style=_STYLE,
                         ).strip()
                         if not line:
                             continue
@@ -235,16 +164,14 @@ class ChatClient:
                             self.exit_flag = True
                             break
                         if line.lower() == "/help":
-                            self._print_status(
-                                "/exit 退出  /help 帮助  /users 列表  直接输入发送消息",
-                                "yellow",
-                            )
+                            self._say("yellow",
+                                      "/exit 退出  /help 帮助  /users 列表  直接输入发送消息")
                             continue
                         if line.lower() == "/users":
                             if self._users:
-                                self._print_userlist()
+                                self._print_users()
                             else:
-                                self._print_status("暂无在线用户", "yellow")
+                                self._say("yellow", "暂无在线用户")
                             continue
                         if self.connected:
                             self.sio.emit("send_message", {
@@ -253,38 +180,25 @@ class ChatClient:
                                 "time": self._now(),
                             })
                         else:
-                            self._print_status("未连接，消息无法发送", "red")
+                            self._say("red", "未连接，消息无法发送")
                     except (KeyboardInterrupt, EOFError):
                         self.exit_flag = True
                         break
 
-        t = threading.Thread(target=input_loop, daemon=True)
-        t.start()
+        threading.Thread(target=input_loop, daemon=True).start()
         self.sio.wait()
-
-        print_formatted_text(
-            FormattedText([("bold ansicyan", "\n再见!")]),
-            style=_PROMPT_STYLE,
-        )
+        print_formatted_text(FormattedText([("bold ansicyan", "\n再见!")]), style=_STYLE)
 
 
 def main() -> None:
-    banner = (
-        f"{C_BOLD_CYAN}╔════════════════════════╗{C_RESET}\n"
-        f"{C_BOLD_CYAN}║  ChatRoom CLI          ║{C_RESET}\n"
-        f"{C_BOLD_CYAN}╚════════════════════════╝{C_RESET}\n"
-    )
-    print(banner)
-
-    username = input(f"{C_BOLD}用户名: {C_RESET}").strip()
+    print(f"\n{BC}  ChatRoom CLI{R}\n")
+    username = input(f"{B}用户名: {R}").strip()
     if not username:
-        print(f"{C_RED}用户名不能为空{C_RESET}")
+        print(f"{RED}用户名不能为空{R}")
         sys.exit(1)
     if len(username) > 20:
         username = username[:20]
-
-    client = ChatClient(username=username)
-    client.run()
+    ChatClient(username=username).run()
 
 
 if __name__ == "__main__":
