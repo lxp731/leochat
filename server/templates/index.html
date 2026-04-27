@@ -165,6 +165,17 @@
   }
   .msg-row:hover { background: rgba(255,255,255,.02); }
 
+  /* 自己的消息右对齐 */
+  .msg-row-me {
+    flex-direction: row-reverse;
+  }
+  .msg-row-me .msg-header {
+    justify-content: flex-end;
+  }
+  .msg-row-me .msg-text {
+    text-align: right;
+  }
+
   .msg-avatar {
     width: 36px; height: 36px;
     border-radius: 50%;
@@ -395,10 +406,20 @@
       div.textContent = text;
       msgEl.appendChild(div);
     } else {
+      const isMe = user && me.name && user === me.name;
       const row = document.createElement('div');
-      row.className = 'msg-row';
+      row.className = `msg-row${isMe ? ' msg-row-me' : ''}`;
       const color = avatarColor(user);
-      row.innerHTML = `
+      row.innerHTML = isMe ? `
+        <div class="msg-body">
+          <div class="msg-header">
+            <span class="msg-time">${time || now()}</span>
+            <span class="msg-user" style="color:${color}">${esc(user)}</span>
+          </div>
+          <div class="msg-text">${esc(text)}</div>
+        </div>
+        <div class="msg-avatar" style="background:${color}">${esc(initials(user))}</div>
+      ` : `
         <div class="msg-avatar" style="background:${color}">${esc(initials(user))}</div>
         <div class="msg-body">
           <div class="msg-header">
