@@ -21,16 +21,8 @@ SERVER_URL = os.environ.get("CHAT_SERVER", "http://127.0.0.1:5000")
 RECONNECT_BASE = 2
 RECONNECT_MAX = 60
 
-# ── 自动检测 Rich 可用性 ──────────────────────────────────
-def _detect_rich() -> bool:
-    try:
-        from rich.console import Console
-        c = Console(highlight=False)
-        return c.color_system is not None
-    except Exception:
-        return False
-
-_rich_ok = _detect_rich()
+# ── Rich: 默认关闭，CHAT_RICH=1 开启（需终端完整支持 ANSI） ─
+_rich_ok = os.environ.get("CHAT_RICH", "").lower() in ("1", "true", "yes")
 if _rich_ok:
     from rich.console import Console
     from rich.panel import Panel
