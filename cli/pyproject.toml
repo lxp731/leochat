@@ -9,4 +9,5 @@ dependencies = [
     "prompt-toolkit>=3.0.51",
     "python-socketio[client]>=5.16.1",
     "requests>=2.32.3",
+    "rich>=13.0.0",
 ]

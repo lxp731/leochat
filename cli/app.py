@@ -1,29 +1,21 @@
 """
-ChatRoom CLI — Rich + prompt_toolkit 混合版
+ChatRoom CLI — 纯 Rich 版
 ═══════════════════════════════════════════════════════════
-Rich 渲染消息 + prompt_toolkit 管理输入（线程安全）。
+Rich 全渲染（Nerd Font 图标 + force_terminal）。
 """
 import os
 import sys
 import threading
 import time
 from datetime import datetime, timezone, timedelta
-from queue import Queue
 
 import socketio
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
-
-from prompt_toolkit import PromptSession
-from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.styles import Style
+from rich.table import Table
 
 console = Console(force_terminal=True, highlight=False)
-CST = timezone(timedelta(hours=8))
-STYLE = Style.from_dict({"prompt": "bold cyan"})
-
 
 def _load_env():
     env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
@@ -35,21 +27,11 @@ def _load_env():
                     k, v = line.split("=", 1)
                     os.environ[k.strip()] = v.strip()
 
-
 _load_env()
-SERVER_URL = os.environ.get(
-    "CHAT_SERVER",
-    f"http://{os.environ.get('SERVER_IP','127.0.0.1')}:{os.environ.get('SERVER_PORT','5000')}",
-)
-
-
-class Msg:
-    __slots__ = ("user", "text", "ts", "kind")
-    def __init__(self, user="", text="", ts="", kind="msg"):
-        self.user = user
-        self.text = text
-        self.ts = ts
-        self.kind = kind
+CST = timezone(timedelta(hours=8))
+SERVER_IP = os.environ.get("SERVER_IP", "127.0.0.1")
+SERVER_PORT = os.environ.get("SERVER_PORT", "5000")
+SERVER_URL = os.environ.get("CHAT_SERVER", f"http://{SERVER_IP}:{SERVER_PORT}")
 
 
 class ChatClient:
@@ -59,7 +41,6 @@ class ChatClient:
         self.exit_flag = False
         self.connected = False
         self._users: list[str] = []
-        self._inbox: Queue = Queue()
         self._register_events()
 
     def _now(self) -> str:
@@ -70,69 +51,56 @@ class ChatClient:
         def connect():
             self.connected = True
             self.sio.emit("join", {"user": self.username})
-            self._inbox.put(Msg(kind="system", text="已连接至服务器"))
+            console.print(f"[bold magenta]󰄬 已连接至服务器: {SERVER_URL}[/bold magenta]")
 
         @self.sio.event
         def disconnect():
             self.connected = False
-            self._inbox.put(Msg(kind="system", text="与服务器断开连接"))
+            console.print("[bold red]󰅚 与服务器断开连接[/bold red]")
 
         @self.sio.on("message")
         def on_message(data):
-            self._inbox.put(Msg(
-                user=data.get("user", "???"),
-                text=data.get("text", ""),
-                ts=data.get("time", self._now()),
-                kind="msg",
-            ))
+            user = data.get("user", "???")
+            text = data.get("text", "")
+            ts = data.get("time", self._now())
+            msg = Text()
+            msg.append(f"󱑎 {ts} ", style="cyan")
+            if user == self.username:
+                msg.append("󰙯 你 ", style="bold green")
+            else:
+                msg.append(f"󰙯 {user} ", style="bold yellow")
+            msg.append(f"󰭹 {text}", style="white")
+            console.print(msg)
 
         @self.sio.on("system")
         def on_system(data):
-            text = data.get("text", "")
-            self._inbox.put(Msg(kind="system", text=text))
+            content = data.get("text", "")
+            icon = "󰋼"
+            if "joined" in content:
+                icon = "󰶼"
+            elif "left" in content:
+                icon = "󰶽"
+            console.print(f"[bold magenta]{icon} {content}[/bold magenta]")
 
         @self.sio.on("error")
         def on_error(data):
-            self._inbox.put(Msg(kind="error", text=data.get("text", "错误")))
+            err = data.get("text", "错误")
+            console.print(f"[bold red]󰅚 {err}[/bold red]")
 
         @self.sio.on("userlist")
         def on_userlist(data):
             self._users = list(data.get("users", []))
 
-    def _render_msg(self, msg: Msg) -> None:
-        if msg.kind == "system":
-            icon = "● "
-            if "joined" in msg.text:
-                icon = "+ "
-            elif "left" in msg.text:
-                icon = "- "
-            console.print(f"[dim magenta]{icon}{msg.text}[/dim magenta]")
-        elif msg.kind == "error":
-            console.print(f"[bold red]✗ {msg.text}[/bold red]")
-        else:
-            t = Text()
-            t.append(f" {msg.ts} ", style="dim cyan")
-            is_me = msg.user == self.username
-            if is_me:
-                t.append(f"{msg.user} ", style="bold green")
-            else:
-                t.append(f"{msg.user} ", style="bold yellow")
-            t.append(msg.text, style="white")
-            console.print(t)
-
-    def _drain_inbox(self) -> None:
-        while not self._inbox.empty():
-            self._render_msg(self._inbox.get_nowait())
-
     def run(self) -> None:
         console.clear()
         console.print(Panel.fit(
-            f"[bold cyan]ChatRoom CLI[/bold cyan]\n[dim]欢迎, {self.username}![/dim]",
+            f"[bold cyan]󰭹 ChatRoom CLI (Pure Rich 版)[/bold cyan]\n"
+            f"[cyan]󱑎 欢迎, {self.username}![/cyan]",
             border_style="blue", padding=(1, 2),
         ))
 
         try:
-            self.sio.connect(SERVER_URL, transports=["websocket", "polling"], wait_timeout=5)
+            self.sio.connect(SERVER_URL, wait_timeout=5)
         except Exception as exc:
             err = str(exc)
             if "refused" in err.lower():
@@ -141,65 +109,61 @@ class ChatClient:
                 console.print(f"[bold red]无法连接服务器: {err}[/bold red]")
             return
 
-        session = PromptSession(history=InMemoryHistory())
-
-        def input_loop():
-            with patch_stdout():
-                while not self.exit_flag:
-                    try:
-                        line = session.prompt(
-                            [("class:prompt", f"{self.username} ❯ ")],
-                            style=STYLE,
-                        ).strip()
-                        if not line:
+        def input_thread_func():
+            while not self.exit_flag:
+                try:
+                    line = console.input(
+                        f" [bold cyan]󰞷 {self.username} ❯ [/bold cyan]"
+                    ).strip()
+                    if not line:
+                        continue
+                    if line.startswith("/"):
+                        cmd = line.lower()[1:]
+                        if cmd in ("exit", "quit"):
+                            self.exit_flag = True
+                            self.sio.disconnect()
+                            break
+                        if cmd == "users":
+                            ul = ", ".join(self._users) if self._users else "无"
+                            console.print(f"[cyan]󰭿 在线: {ul}[/cyan]")
                             continue
-                        if line.startswith("/"):
-                            cmd = line[1:].lower()
-                            if cmd in ("exit", "quit"):
-                                self.exit_flag = True
-                                self.sio.disconnect()
-                                break
-                            if cmd == "users":
-                                ul = ", ".join(self._users) if self._users else "无"
-                                self._inbox.put(Msg(kind="system", text=f"在线: {ul}"))
-                                continue
-                            if cmd == "help":
-                                self._inbox.put(Msg(kind="system", text="命令: /users /exit /help"))
-                                continue
-                            self._inbox.put(Msg(kind="error", text=f"未知命令: /{cmd}"))
+                        if cmd == "help":
+                            console.print("[yellow]命令: /users /exit /help[/yellow]")
                             continue
-                        if self.connected:
-                            self.sio.emit("send_message", {
-                                "user": self.username,
-                                "text": line,
-                                "time": self._now(),
-                            })
-                        else:
-                            self._inbox.put(Msg(kind="error", text="未连接，发送失败"))
-                    except (KeyboardInterrupt, EOFError):
-                        self.exit_flag = True
-                        self.sio.disconnect()
-                        break
+                        console.print(f"[red]未知命令: /{cmd}[/red]")
+                        continue
+                    if self.connected:
+                        self.sio.emit("send_message", {
+                            "user": self.username,
+                            "text": line,
+                            "time": self._now(),
+                        })
+                    else:
+                        console.print("[bold red]󰅚 发送失败: 未连接[/bold red]")
+                except (KeyboardInterrupt, EOFError):
+                    self.exit_flag = True
+                    self.sio.disconnect()
+                    break
 
-        threading.Thread(target=input_loop, daemon=True).start()
+        threading.Thread(target=input_thread_func, daemon=True).start()
 
+        # 主循环等待退出（非 sio.wait，避免死锁）
         while not self.exit_flag:
-            self._drain_inbox()
-            time.sleep(0.05)
-        self.sio.disconnect()
+            time.sleep(0.1)
 
-        console.print("\n[bold cyan]再见![/bold cyan]")
+        console.print("\n[bold cyan]再见! 👋[/bold cyan]")
 
 
 def main() -> None:
     console.clear()
-    console.print(Panel.fit("💬 [bold cyan]ChatRoom[/bold cyan]", border_style="blue"))
+    console.print(Panel.fit("💬 [bold cyan]极简聊天室[/bold cyan]", border_style="blue"))
     try:
-        username = console.input("[bold yellow]请输入昵称: [/bold yellow]").strip()
+        username = console.input("[bold yellow]󰙯 请输入您的昵称: [/bold yellow]").strip()
         if not username:
             console.print("[red]昵称不能为空[/red]")
             return
-        ChatClient(username).run()
+        client = ChatClient(username)
+        client.run()
     except KeyboardInterrupt:
         console.print("\n[yellow]已取消[/yellow]")
 
