@@ -159,6 +159,7 @@ class ChatClient:
                             continue
                         if line.lower() in ("/exit", "/quit"):
                             self.exit_flag = True
+                            self.sio.disconnect()
                             break
                         if line.lower() == "/help":
                             self._say("", "命令: /exit 退出  /help 帮助  /users 列表")
@@ -179,6 +180,7 @@ class ChatClient:
                             self._say("bold ansired", "未连接，消息无法发送")
                     except (KeyboardInterrupt, EOFError):
                         self.exit_flag = True
+                        self.sio.disconnect()
                         break
 
         threading.Thread(target=input_loop, daemon=True).start()
