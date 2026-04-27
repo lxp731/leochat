@@ -8,8 +8,8 @@ import time
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
-from flask import Flask, render_template, request
-from flask_socketio import SocketIO, emit
+from flask import Flask, render_template, request # type: ignore
+from flask_socketio import SocketIO, emit # type: ignore
 
 # ── 配置 ──────────────────────────────────────────────────
 SECRET_KEY = os.environ.get("SECRET_KEY", os.urandom(24).hex())

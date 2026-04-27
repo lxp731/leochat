@@ -1,18 +1,19 @@
 """
 ChatRoom CLI — 终端聊天客户端
 ═══════════════════════════════════════════════════════════
-基于 Rich + Socket.IO 的专业终端 UI。
+Rich 渲染消息 + prompt_toolkit 管理输入，互不干扰。
 """
 import os
 import sys
 import threading
-from queue import Queue
 from datetime import datetime, timezone, timedelta
 
 import socketio
+from prompt_toolkit import PromptSession
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.styles import Style
 from rich.console import Console
-from rich.layout import Layout
-from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -25,19 +26,20 @@ RECONNECT_BASE = 2
 RECONNECT_MAX = 60
 
 console = Console()
+style = Style.from_dict({
+    "prompt": "bold green",
+})
 
-
-# ── 消息类型 ──────────────────────────────────────────────
+# ── 消息 ──────────────────────────────────────────────────
 class Msg:
     __slots__ = ("user", "text", "ts", "kind")
     def __init__(self, user="", text="", ts="", kind="msg"):
         self.user = user
         self.text = text
         self.ts = ts
-        self.kind = kind  # msg / system / error
+        self.kind = kind
 
 
-# ── 客户端 ────────────────────────────────────────────────
 class ChatClient:
     def __init__(self, username: str):
         self.username = username
@@ -45,59 +47,65 @@ class ChatClient:
         self.exit_flag = False
         self.connected = False
         self._reconnect_attempt = 0
-        self._msg_queue: Queue = Queue()
-        self._input_queue: Queue = Queue()
         self._users: list[str] = []
+        self._msg_history: list[Msg] = []   # 消息历史
+        self._last_userlist: list[str] = []
         self._register_events()
+
+    def _now(self) -> str:
+        return datetime.now(CST).strftime("%H:%M")
 
     def _register_events(self) -> None:
         @self.sio.event
         def connect():
             self.connected = True
             self._reconnect_attempt = 0
-            self._msg_queue.put(Msg(kind="system", text="已连接到服务器"))
-            # 注册用户名
             self.sio.emit("join", {"user": self.username})
+            self._print_header()
+            self._print_status("已连接到服务器", "green")
 
         @self.sio.event
         def disconnect():
             self.connected = False
-            self._msg_queue.put(Msg(kind="system", text="连接断开"))
+            self._print_status("连接断开", "red")
             if not self.exit_flag:
                 self._try_reconnect()
 
         @self.sio.on("message")
         def on_message(data):
-            self._msg_queue.put(Msg(
+            msg = Msg(
                 user=data.get("user", "???"),
                 text=data.get("text", ""),
                 ts=data.get("time", ""),
                 kind="msg",
-            ))
+            )
+            self._msg_history.append(msg)
+            self._print_msg(msg)
 
         @self.sio.on("system")
         def on_system(data):
-            self._msg_queue.put(Msg(kind="system", text=data.get("text", "")))
+            text = data.get("text", "")
+            msg = Msg(kind="system", text=text)
+            self._msg_history.append(msg)
+            self._print_system(text)
 
         @self.sio.on("error")
         def on_error(data):
-            self._msg_queue.put(Msg(
-                kind="error",
-                text=f"⚠ {data.get('text', 'Unknown error')}",
-            ))
+            text = f"⚠ {data.get('text', 'Error')}"
+            console.print(Text(text, style="bold red"), highlight=False)
 
         @self.sio.on("userlist")
         def on_userlist(data):
             self._users = list(data.get("users", []))
+            self._last_userlist = list(self._users)
+            if self._users:
+                self._print_userlist()
 
     def _try_reconnect(self) -> None:
         def reconnect():
             delay = min(RECONNECT_BASE * (2 ** self._reconnect_attempt), RECONNECT_MAX)
             self._reconnect_attempt += 1
-            self._msg_queue.put(Msg(
-                kind="system",
-                text=f"将在 {delay}s 后重连 (第 {self._reconnect_attempt} 次)…",
-            ))
+            self._print_status(f"将在 {delay}s 后重连 (第 {self._reconnect_attempt} 次)…", "yellow")
             import time
             time.sleep(delay)
             if self.exit_flag:
@@ -105,160 +113,120 @@ class ChatClient:
             try:
                 self.sio.connect(SERVER_URL)
             except Exception as exc:
-                self._msg_queue.put(Msg(kind="error", text=f"重连失败: {exc}"))
+                self._print_status(f"重连失败: {exc}", "red")
                 if not self.exit_flag:
                     self._try_reconnect()
 
         t = threading.Thread(target=reconnect, daemon=True)
         t.start()
 
-    def _now(self) -> str:
-        return datetime.now(CST).strftime("%H:%M")
+    # ── Rich 渲染 ──────────────────────────────────────
 
-    # ── Rich UI 渲染 ───────────────────────────────────
-    def _render(self) -> Layout:
-        root = Layout()
-        root.split_column(
-            Layout(self._header(), size=3, name="header"),
-            Layout(name="body"),
-            Layout(self._footer(), size=3, name="footer"),
-        )
-        root["body"].split_row(
-            Layout(self._messages(), name="messages", ratio=3),
-            Layout(self._sidebar(), name="sidebar", ratio=1),
-        )
-        return root
-
-    def _header(self) -> Panel:
-        status = "[bold green]● 在线[/]" if self.connected else "[bold red]● 离线[/]"
-        text = Text.assemble(
+    def _print_header(self) -> None:
+        """打印顶部标题栏."""
+        status_dot = "[bold green]●[/]" if self.connected else "[bold red]●[/]"
+        title = Text.assemble(
             ("💬 ChatRoom / ", "bold cyan"),
-            (f"{self.username}", "bold white"),
-            ("    ", ""),
-            (status, ""),
-            ("    ", ""),
-            (f"⌂ {SERVER_URL}", "dim"),
+            (self.username, "bold white"),
+            (f"    {status_dot} ", ""),
+            (f"{SERVER_URL}", "dim"),
         )
-        return Panel(text, box=ROUNDED, border_style="cyan")
+        console.print(Panel(title, box=ROUNDED, border_style="cyan"), highlight=False)
 
-    def _sidebar(self) -> Panel:
-        table = Table(box=SIMPLE, show_header=True, header_style="bold cyan", expand=True)
-        table.add_column("在线用户", style="white")
-        if self._users:
-            for u in self._users:
-                icon = "[green]●[/]" if u == self.username else "[dim]●[/]"
-                name = f"[bold]{u}[/]" if u == self.username else u
-                table.add_row(f"{icon} {name}")
-        else:
-            table.add_row("[dim]— 暂无 —[/]")
-        return Panel(table, title="👥 在线", border_style="cyan", box=ROUNDED)
+    def _print_status(self, text: str, color: str) -> None:
+        console.print(Text(f"  ─ {text}", style=f"dim italic {color}"), highlight=False)
 
-    def _messages(self) -> Panel:
-        """组装最近的消息显示."""
-        items = []
-        while not self._msg_queue.empty():
-            items.append(self._msg_queue.get_nowait())
+    def _print_msg(self, msg: Msg) -> None:
+        """打印一条聊天消息."""
+        time_str = Text(f" {msg.ts} ", style="dim") if msg.ts else Text("")
+        user_str = Text(f"{msg.user}", style="bold cyan")
+        text_str = Text(f"  {msg.text}")
+        line = Text.assemble(time_str, ("  ", ""), user_str, text_str)
+        console.print(Align.left(line), highlight=False)
 
-        if not items:
-            content = Align.center(
-                "[dim italic]欢迎来到 ChatRoom! 输入消息开始聊天。[/]",
-                vertical="middle",
-            )
-        else:
-            lines: list[Text] = []
-            for m in items[-200:]:  # 最多显示 200 条
-                if m.kind == "system":
-                    lines.append(Text(f"  ─ {m.text}", style="dim italic yellow"))
-                elif m.kind == "error":
-                    lines.append(Text(f"  ⚠ {m.text}", style="bold red"))
-                else:
-                    ts = f"[dim]{m.ts}[/dim]" if m.ts else ""
-                    time_part = Text.from_markup(f" {ts} ") if ts else Text("")
-                    user_part = Text(f"{m.user}", style="bold cyan")
-                    text_part = Text(f"  {m.text}")
-                    line = Text.assemble(
-                        (f"{'  ' if not ts else ''}", ""),
-                        time_part, ("  ", ""), user_part, text_part,
-                    )
-                    lines.append(line)
-            content = Text("\n").join(lines) if lines else Text("")
+    def _print_system(self, text: str) -> None:
+        console.print(Text(f"  ─ {text}", style="dim italic yellow"), highlight=False)
 
-        return Panel(content, title="📋 消息", border_style="cyan", box=ROUNDED)
-
-    def _footer(self) -> Panel:
-        hint = Text("输入消息后回车发送  |  /exit 退出  |  /help 帮助", style="dim")
-        return Panel(hint, box=ROUNDED, border_style="cyan")
-
-    # ── 输入循环 ──────────────────────────────────────
-    def _input_loop(self) -> None:
-        """在独立线程中读取用户输入."""
-        while not self.exit_flag:
-            try:
-                raw = console.input(f"[bold green]You ({self.username}) ➤[/] ")
-                self._input_queue.put(raw.strip())
-            except (KeyboardInterrupt, EOFError):
-                self.exit_flag = True
-                break
+    def _print_userlist(self) -> None:
+        """打印在线用户面板."""
+        table = Table(box=SIMPLE, show_header=False, expand=False,
+                      padding=(0, 2), collapse_padding=True)
+        table.add_column(style="white")
+        for u in self._users:
+            icon = "[green]●[/]" if u == self.username else "[dim]●[/]"
+            name = f"[bold]{u}[/]" if u == self.username else u
+            table.add_row(f"{icon} {name}")
+        panel = Panel(table, title="👥 在线",
+                      border_style="cyan", box=ROUNDED, width=30)
+        console.print(panel, highlight=False)
 
     # ── 运行 ──────────────────────────────────────────
+
     def run(self) -> None:
         try:
             self.sio.connect(SERVER_URL)
         except Exception as exc:
-            console.print(f"[bold red]无法连接服务器: {exc}[/]")
+            console.print(Text(f"❌ 无法连接服务器: {exc}", style="bold red"), highlight=False)
             sys.exit(1)
 
-        # 启动输入线程
-        input_t = threading.Thread(target=self._input_loop, daemon=True)
-        input_t.start()
+        # 在 prompt_toolkit 的 patch_stdout 上下文中运行输入
+        session = PromptSession(history=InMemoryHistory())
 
-        # Rich Live 渲染循环
-        with Live(self._render(), console=console, refresh_per_second=8,
-                  screen=True, transient=False) as live:
-            while not self.exit_flag:
-                # 处理输入
-                if not self._input_queue.empty():
-                    cmd = self._input_queue.get_nowait()
-                    if not cmd:
-                        continue
-                    if cmd.lower() in ("/exit", "/quit"):
+        def user_input_thread():
+            with patch_stdout():
+                while not self.exit_flag:
+                    try:
+                        line = session.prompt(
+                            [("class:prompt", f"You ({self.username}) ➤ ")],
+                            style=style,
+                        ).strip()
+                        if not line:
+                            continue
+                        if line.lower() in ("/exit", "/quit"):
+                            self.exit_flag = True
+                            break
+                        if line.lower() == "/help":
+                            self._print_system(
+                                "命令: /exit 退出  /help 帮助  /users 列表\n"
+                                "      直接输入文字即可发送消息"
+                            )
+                            continue
+                        if line.lower() == "/users":
+                            if self._users:
+                                self._print_userlist()
+                            else:
+                                self._print_system("暂无在线用户")
+                            continue
+                        if self.connected:
+                            self.sio.emit("send_message", {
+                                "user": self.username,
+                                "text": line,
+                                "time": self._now(),
+                            })
+                        else:
+                            self._print_status("未连接，消息无法发送", "red")
+                    except (KeyboardInterrupt, EOFError):
                         self.exit_flag = True
                         break
-                    if cmd.lower() == "/help":
-                        self._msg_queue.put(Msg(kind="system", text="""
-命令:  /exit 退出  /help 帮助  /users 用户列表
-直接输入文字即可发送消息""".strip()))
-                        continue
-                    if cmd.lower() == "/users":
-                        ulist = ", ".join(self._users) if self._users else "无"
-                        self._msg_queue.put(Msg(kind="system", text=f"在线: {ulist}"))
-                        continue
-                    # 发送消息
-                    if self.connected:
-                        self.sio.emit("send_message", {
-                            "user": self.username,
-                            "text": cmd,
-                            "time": self._now(),
-                        })
-                    else:
-                        self._msg_queue.put(Msg(kind="error", text="未连接，消息无法发送"))
 
-                # 更新 UI
-                live.update(self._render())
+        t = threading.Thread(target=user_input_thread, daemon=True)
+        t.start()
 
-        self.sio.disconnect()
+        # 主线程跑 Socket.IO 事件循环
+        self.sio.wait()
+        console.print(Text("\n再见! 👋", style="bold cyan"), highlight=False)
 
 
 def main() -> None:
     console.print(Panel.fit(
         "[bold cyan]💬  ChatRoom CLI[/]\n\n"
-        "[dim]专业终端聊天客户端 | Rich + Socket.IO[/]",
+        "[dim]Rich + prompt_toolkit + Socket.IO[/]",
         border_style="cyan", box=ROUNDED,
-    ))
+    ), highlight=False)
 
     username = console.input("[bold]请输入用户名: [/]").strip()
     if not username:
-        console.print("[red]用户名不能为空[/]")
+        console.print("[red]用户名不能为空[/]", highlight=False)
         sys.exit(1)
     if len(username) > 20:
         username = username[:20]
