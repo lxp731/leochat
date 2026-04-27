@@ -1,79 +1,514 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Chat Room</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto; padding: 16px; }
-    h1 { margin-bottom: 12px; color: #333; }
-    #chat {
-      border: 1px solid #ddd; border-radius: 8px; height: 400px; overflow-y: scroll;
-      padding: 12px; background: #fafafa; margin-bottom: 12px;
-    }
-    #chat p { margin: 4px 0; word-break: break-word; }
-    .sys { color: #888; font-style: italic; }
-    .err { color: #e74c3c; }
-    #controls { display: flex; gap: 8px; }
-    #controls input { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
-    #username { width: 120px; flex-shrink: 0; }
-    #message { flex: 1; }
-    #controls button {
-      padding: 8px 16px; background: #3498db; color: white; border: none;
-      border-radius: 6px; cursor: pointer; font-size: 14px;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatRoom</title>
+<style>
+  :root {
+    --bg: #1a1b2e;
+    --sidebar-bg: #12131c;
+    --chat-bg: #1a1b2e;
+    --input-bg: #252640;
+    --msg-other: #2a2b45;
+    --msg-self: #3b4bcc;
+    --text: #d4d4e6;
+    --text-dim: #7c7d9c;
+    --text-bright: #f0f0ff;
+    --accent: #5b6af0;
+    --danger: #e74c5e;
+    --border: #2a2b40;
+    --radius: 12px;
+    --shadow: 0 2px 8px rgba(0,0,0,.3);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100dvh;
+    display: flex;
+    overflow: hidden;
+  }
+
+  /* ── Sidebar ───────────────────── */
+  .sidebar {
+    width: 260px;
+    background: var(--sidebar-bg);
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .sidebar-header {
+    padding: 20px 16px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .sidebar-header h2 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-bright);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sidebar-header .dot {
+    width: 10px; height: 10px;
+    border-radius: 50%; background: #4ade80;
+    display: inline-block;
+    box-shadow: 0 0 6px rgba(74,222,128,.5);
+  }
+  .online-count {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+  .user-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .user-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    color: var(--text-dim);
+    font-size: 14px;
+    transition: background .15s;
+  }
+  .user-item:hover { background: rgba(255,255,255,.04); }
+  .user-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), #8b5cf6);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 600; color: #fff;
+    flex-shrink: 0;
+  }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-left: auto;
+    background: #4ade80;
+  }
+  .sidebar-footer {
+    padding: 12px 16px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  /* ── Main Chat ──────────────────── */
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .chat-header {
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .chat-header h3 { font-size: 16px; color: var(--text-bright); }
+  .chat-header .conn-status {
+    font-size: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    scroll-behavior: smooth;
+  }
+  .messages::-webkit-scrollbar { width: 6px; }
+  .messages::-webkit-scrollbar-track { background: transparent; }
+  .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  .msg-date-divider {
+    text-align: center;
+    margin: 16px 0 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: .5px;
+    text-transform: uppercase;
+  }
+  .msg-date-divider span {
+    background: var(--bg);
+    padding: 2px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+  }
+
+  .msg-group {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+
+  .msg-row {
+    display: flex;
+    gap: 12px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    transition: background .1s;
+    align-items: flex-start;
+  }
+  .msg-row:hover { background: rgba(255,255,255,.02); }
+
+  .msg-avatar {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700;
+    color: #fff;
+    flex-shrink: 0;
+    margin-top: 4px;
+  }
+  .msg-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .msg-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .msg-user {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-bright);
+  }
+  .msg-time {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .msg-text {
+    font-size: 14px;
+    line-height: 1.55;
+    word-break: break-word;
+    color: var(--text);
+  }
+
+  .msg-system {
+    text-align: center;
+    margin: 8px 0;
+    font-size: 12px;
+    color: var(--text-dim);
+    font-style: italic;
+  }
+  .msg-system i {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(255,255,255,.04);
+    padding: 4px 14px;
+    border-radius: 12px;
+  }
+
+  .msg-error {
+    text-align: center;
+    margin: 8px 0;
+    font-size: 12px;
+    color: var(--danger);
+  }
+
+  /* ── Input ─────────────────────── */
+  .input-area {
+    padding: 12px 24px 16px;
+    border-top: 1px solid var(--border);
+  }
+  .input-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+  }
+  .input-row input {
+    flex: 1;
+    background: var(--input-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    color: var(--text-bright);
+    font-size: 14px;
+    outline: none;
+    transition: border .2s;
+  }
+  .input-row input:focus { border-color: var(--accent); }
+  .input-row input::placeholder { color: var(--text-dim); }
+
+  .input-row .name-input { width: 120px; flex: none; }
+  .btn-send {
+    width: 44px; height: 44px;
+    border-radius: 10px;
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    font-size: 18px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .2s, transform .1s;
+    flex-shrink: 0;
+  }
+  .btn-send:hover { background: #4a5adb; }
+  .btn-send:active { transform: scale(.95); }
+
+  /* ── Scroll-to-bottom ──────────── */
+  .scroll-btn {
+    position: fixed;
+    bottom: 90px;
+    right: 40px;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    font-size: 16px;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+  }
+  .scroll-btn.visible { display: flex; }
+
+  /* ── Toast ─────────────────────── */
+  .toast {
+    position: fixed;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--danger);
+    color: #fff;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: 13px;
+    z-index: 100;
+    opacity: 0;
+    transition: opacity .3s;
+    pointer-events: none;
+  }
+  .toast.show { opacity: 1; }
+
+  /* ── Responsive ───────────────── */
+  @media (max-width: 640px) {
+    .sidebar { display: none; }
+    .messages { padding: 12px; }
+    .input-area { padding: 8px 12px 12px; }
+    .input-row .name-input { width: 90px; }
+  }
+</style>
 </head>
 <body>
-  <h1>Chat Room</h1>
-  <div id="chat"></div>
-  <div id="controls">
-    <input type="text" id="username" placeholder="Name" maxlength="20">
-    <input type="text" id="message" placeholder="Type a message..." maxlength="2000">
-    <button id="sendBtn">Send</button>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <h2><span class="dot" id="statusDot"></span> ChatRoom</h2>
+    <div class="online-count" id="onlineCount">— online</div>
   </div>
+  <div class="user-list" id="userList"></div>
+  <div class="sidebar-footer" id="sidebarFooter">Connecting…</div>
+</aside>
 
-  <script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
-  <script>
-    const socket = io();
-    const chatDiv = document.getElementById('chat');
-    const msgInput = document.getElementById('message');
-    const userInput = document.getElementById('username');
+<!-- Main -->
+<main class="main">
+  <header class="chat-header">
+    <h3>💬 公共大厅</h3>
+    <span class="conn-status" id="connStatus">🔴 未连接</span>
+  </header>
 
-    function esc(s) {
-      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  <div class="messages" id="messages"></div>
+
+  <div class="input-area">
+    <div class="input-row">
+      <input type="text" class="name-input" id="username" placeholder="昵称" maxlength="20">
+      <input type="text" id="message" placeholder="输入消息…" maxlength="2000">
+      <button class="btn-send" id="sendBtn" title="发送 (Enter)">➤</button>
+    </div>
+  </div>
+</main>
+
+<button class="scroll-btn" id="scrollBtn" title="滚到底部">↓</button>
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
+<script>
+  // ── State ────────────────────────
+  const me = { name: '', color: '' };
+  const users = new Map();
+  let connected = false;
+  let lastDate = '';
+
+  // ── Elements ─────────────────────
+  const $ = id => document.getElementById(id);
+  const msgEl = $('messages');
+  const msgInput = $('message');
+  const userInput = $('username');
+  const sendBtn = $('sendBtn');
+  const scrollBtn = $('scrollBtn');
+  const toast = $('toast');
+  const socket = io();
+
+  // ── Helpers ──────────────────────
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const now = () => new Date().toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit' });
+  const dateStr = () => new Date().toLocaleDateString('zh-CN', { month:'long', day:'numeric', weekday:'short' });
+  const avatarColor = name => {
+    let h = 0;
+    for (let c of name) h = c.charCodeAt(0) + ((h<<5)-h);
+    const hue = Math.abs(h) % 360;
+    return `hsl(${hue}, 55%, 50%)`;
+  };
+  const initials = name => (name || '?').slice(0,2).toUpperCase();
+
+  function checkDate() {
+    const d = dateStr();
+    if (d !== lastDate) {
+      lastDate = d;
+      const div = document.createElement('div');
+      div.className = 'msg-date-divider';
+      div.innerHTML = `<span>${d}</span>`;
+      msgEl.appendChild(div);
     }
+  }
 
-    function appendMsg(cls, user, text) {
-      const p = document.createElement('p');
-      p.className = cls || '';
-      if (user) {
-        const b = document.createElement('b');
-        b.textContent = user + ': ';
-        p.appendChild(b);
-      }
-      p.appendChild(document.createTextNode(text));
-      chatDiv.appendChild(p);
-      chatDiv.scrollTop = chatDiv.scrollHeight;
+  function appendMsg(user, text, cls, time) {
+    checkDate();
+    if (cls === 'system') {
+      const div = document.createElement('div');
+      div.className = 'msg-system';
+      div.innerHTML = `<i>${text}</i>`;
+      msgEl.appendChild(div);
+    } else if (cls === 'error') {
+      const div = document.createElement('div');
+      div.className = 'msg-error';
+      div.textContent = text;
+      msgEl.appendChild(div);
+    } else {
+      const row = document.createElement('div');
+      row.className = 'msg-row';
+      const color = avatarColor(user);
+      row.innerHTML = `
+        <div class="msg-avatar" style="background:${color}">${esc(initials(user))}</div>
+        <div class="msg-body">
+          <div class="msg-header">
+            <span class="msg-user" style="color:${color}">${esc(user)}</span>
+            <span class="msg-time">${time || now()}</span>
+          </div>
+          <div class="msg-text">${esc(text)}</div>
+        </div>`;
+      msgEl.appendChild(row);
     }
+    maybeScroll();
+  }
 
-    socket.on('system', data => appendMsg('sys', null, data.text));
-    socket.on('error', data => appendMsg('err', null, data.text));
-    socket.on('message', data => {
-      appendMsg('', data.user, data.text);
-    });
+  function maybeScroll() {
+    const atBottom = msgEl.scrollHeight - msgEl.scrollTop - msgEl.clientHeight < 80;
+    if (atBottom) msgEl.scrollTop = msgEl.scrollHeight;
+    scrollBtn.classList.toggle('visible', !atBottom && msgEl.scrollHeight > msgEl.clientHeight + 100);
+  }
 
-    function sendMessage() {
-      const user = userInput.value.trim();
-      const text = msgInput.value.trim();
-      if (!user || !text) return;
-      socket.emit('send_message', { user, text });
-      msgInput.value = '';
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2500);
+  }
+
+  // ── User list ────────────────────
+  function updateUserList() {
+    $('onlineCount').textContent = `${users.size} 人在线`;
+    $('userList').innerHTML = Array.from(users.values()).map(u => `
+      <div class="user-item">
+        <div class="user-avatar" style="background:${avatarColor(u)}">${esc(initials(u))}</div>
+        <span>${esc(u)}</span>
+        <span class="status-dot"></span>
+      </div>
+    `).join('');
+  }
+
+  // ── Socket events ────────────────
+  socket.on('connect', () => {
+    connected = true;
+    $('statusDot').style.background = '#4ade80';
+    $('connStatus').innerHTML = '🟢 已连接';
+    $('sidebarFooter').textContent = '已连接';
+    if (me.name) {
+      socket.emit('join', { user: me.name });
     }
+  });
 
-    msgInput.addEventListener('keydown', e => { if (e.key === 'Enter') sendMessage(); });
-    document.getElementById('sendBtn').addEventListener('click', sendMessage);
-  </script>
+  socket.on('disconnect', () => {
+    connected = false;
+    users.clear();
+    updateUserList();
+    $('statusDot').style.background = '#ef4444';
+    $('connStatus').innerHTML = '🔴 断线';
+    $('sidebarFooter').textContent = '连接已断开';
+  });
+
+  socket.on('message', data => {
+    appendMsg(data.user, data.text, 'msg', data.time);
+    if (data.user && data.user !== 'System' && !users.has(data.user)) {
+      users.set(data.user, data.user);
+      updateUserList();
+    }
+  });
+
+  socket.on('system', data => {
+    appendMsg('', data.text, 'system');
+    // 解析加入/离开事件
+    if (data.text && data.text.includes('joined')) {
+      const m = data.text.match(/(.+?) has joined/);
+      if (m) { users.set(m[1], m[1]); updateUserList(); }
+    } else if (data.text && data.text.includes('left')) {
+      const m = data.text.match(/(.+?) has left/);
+      if (m) { users.delete(m[1]); updateUserList(); }
+    }
+  });
+
+  socket.on('error', data => {
+    showToast(data.text || 'Error');
+  });
+
+  socket.on('userlist', data => {
+    data.users.forEach(u => users.set(u, u));
+    updateUserList();
+  });
+
+  // ── Send ─────────────────────────
+  function send() {
+    const name = userInput.value.trim();
+    const text = msgInput.value.trim();
+    if (!name) return showToast('请先输入昵称');
+    if (!text) return;
+    if (!connected) return showToast('未连接到服务器');
+    me.name = name;
+    socket.emit('send_message', { user: name, text, time: now() });
+    msgInput.value = '';
+    msgInput.focus();
+  }
+
+  // ── Events ───────────────────────
+  sendBtn.addEventListener('click', send);
+  msgInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  scrollBtn.addEventListener('click', () => { msgEl.scrollTop = msgEl.scrollHeight; });
+  msgEl.addEventListener('scroll', maybeScroll);
+
+  // Persist username
+  userInput.value = localStorage.getItem('chatroom_name') || '';
+  userInput.addEventListener('change', () => localStorage.setItem('chatroom_name', userInput.value.trim()));
+</script>
 </body>
 </html>

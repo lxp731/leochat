@@ -1,72 +1,136 @@
+"""
+ChatRoom — 轻量实时聊天服务器
+─────────────────────────────────
+Flask + Socket.IO, 支持速率限制、在线用户列表、环境变量配置。
+"""
 import os
 import time
 from collections import defaultdict
+from datetime import datetime, timezone, timedelta
 
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', os.urandom(24).hex())
+# ── 配置 ──────────────────────────────────────────────────
+SECRET_KEY = os.environ.get("SECRET_KEY", os.urandom(24).hex())
+CHAT_DEBUG = os.environ.get("CHAT_DEBUG", "false").lower() in ("1", "true", "yes")
+CHAT_PORT = int(os.environ.get("CHAT_PORT", "5000"))
+MAX_MSG_LEN = 2000
+MAX_NAME_LEN = 20
+RATE_WINDOW = 2          # 速率限制窗口 (秒)
+RATE_MAX = 5             # 窗口内最大消息数
 
+CST = timezone(timedelta(hours=8))
+
+app = Flask(__name__)
+app.config["SECRET_KEY"] = SECRET_KEY
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# ── 简易速率限制 ──────────────────────────────────────────
-MAX_MSG_LEN = 2000
-RATE_LIMIT_WINDOW = 2          # 秒
-RATE_LIMIT_MAX = 5             # 窗口内最大消息数
+# ── 状态 ──────────────────────────────────────────────────
 _client_timestamps: dict[str, list[float]] = defaultdict(list)
+_sid_to_user: dict[str, str] = {}          # sid → username
+_user_to_sids: dict[str, set[str]] = defaultdict(set)
+
+
+def _now_str() -> str:
+    return datetime.now(CST).strftime("%H:%M")
+
+
+def _broadcast_userlist() -> None:
+    users = list(dict.fromkeys(_sid_to_user.values()))
+    emit("userlist", {"users": users}, broadcast=True)
+
 
 def _check_rate(sid: str) -> bool:
     now = time.time()
     ts = _client_timestamps[sid]
-    # 清理过期时间戳
-    ts[:] = [t for t in ts if now - t < RATE_LIMIT_WINDOW]
+    ts[:] = [t for t in ts if now - t < RATE_WINDOW]
     ts.append(now)
-    return len(ts) <= RATE_LIMIT_MAX
+    return len(ts) <= RATE_MAX
 
 
-@app.route('/')
+# ── HTTP ──────────────────────────────────────────────────
+@app.route("/")
 def index():
-    return render_template('index.html')
+    return render_template("index.html")
 
 
 # ── 连接 / 断线 ───────────────────────────────────────────
-@socketio.on('connect')
+@socketio.on("connect")
 def handle_connect(auth=None):
-    print(f'[+] Client connected: {request.sid}')
-    # 通知所有人（不含自己）
-    emit('system', {'text': 'A new user has joined the chat.'}, broadcast=True, include_self=False)
+    print(f"[+] {request.sid} connected")
 
 
-@socketio.on('disconnect')
+@socketio.on("disconnect")
 def handle_disconnect():
-    print(f'[-] Client disconnected: {request.sid}')
-    emit('system', {'text': 'A user has left the chat.'}, broadcast=True)
+    sid = request.sid
+    username = _sid_to_user.pop(sid, None)
+    if username:
+        _user_to_sids[username].discard(sid)
+        if not _user_to_sids[username]:
+            del _user_to_sids[username]
+            emit("system", {"text": f"{username} has left the chat."}, broadcast=True)
+        _broadcast_userlist()
+    print(f"[-] {sid} disconnected ({username or 'unknown'})")
 
 
-# ── 消息转发 ──────────────────────────────────────────────
-@socketio.on('send_message')
-def handle_message(data):
-    # 输入校验
+# ── 用户注册 ──────────────────────────────────────────────
+@socketio.on("join")
+def handle_join(data):
     if not isinstance(data, dict):
         return
-    user = str(data.get('user', 'Anonymous'))[:50]
-    text = str(data.get('text', ''))[:MAX_MSG_LEN]
-    if not text.strip():
+    username = str(data.get("user", ""))[:MAX_NAME_LEN].strip()
+    if not username:
         return
 
-    # 速率限制
+    sid = request.sid
+    old_name = _sid_to_user.get(sid)
+
+    if old_name and old_name != username:
+        _user_to_sids[old_name].discard(sid)
+        if not _user_to_sids[old_name]:
+            del _user_to_sids[old_name]
+
+    _sid_to_user[sid] = username
+    _user_to_sids[username].add(sid)
+
+    if username != old_name:
+        emit("system", {"text": f"{username} has joined the chat."}, broadcast=True)
+    _broadcast_userlist()
+
+
+# ── 消息 ──────────────────────────────────────────────────
+@socketio.on("send_message")
+def handle_message(data):
+    if not isinstance(data, dict):
+        return
+
+    user = str(data.get("user", "Anonymous"))[:MAX_NAME_LEN].strip()
+    text = str(data.get("text", ""))[:MAX_MSG_LEN]
+    ts = data.get("time") or _now_str()
+
+    if not user or not text.strip():
+        return
+
     if not _check_rate(request.sid):
-        emit('error', {'text': 'Rate limit exceeded. Slow down.'})
+        emit("error", {"text": "发送太快，请稍候。"})
         return
 
-    print(f"[MSG] {user}: {text[:80]}{'...' if len(text)>80 else ''}")
-    # broadcast=True + include_self=True → 发给所有人（包括发送者）
-    emit('message', {'user': user, 'text': text}, broadcast=True, include_self=True)
+    # 自动注册用户名
+    sid = request.sid
+    if sid not in _sid_to_user or _sid_to_user[sid] != user:
+        old = _sid_to_user.get(sid)
+        if old:
+            _user_to_sids[old].discard(sid)
+        _sid_to_user[sid] = user
+        _user_to_sids[user].add(sid)
+        _broadcast_userlist()
+
+    print(f"[MSG] {user}: {text[:80]}{'…' if len(text) > 80 else ''}")
+    emit("message", {"user": user, "text": text, "time": ts},
+         broadcast=True, include_self=True)
 
 
-if __name__ == '__main__':
-    debug = os.environ.get('CHAT_DEBUG', 'false').lower() in ('1', 'true', 'yes')
-    port = int(os.environ.get('CHAT_PORT', '5000'))
-    socketio.run(app, host='0.0.0.0', port=port,
-                 debug=debug, allow_unsafe_werkzeug=True)
+if __name__ == "__main__":
+    socketio.run(app, host="0.0.0.0", port=CHAT_PORT,
+                 debug=CHAT_DEBUG, allow_unsafe_werkzeug=True)
