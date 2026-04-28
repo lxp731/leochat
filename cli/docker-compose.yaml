@@ -1,0 +1,6 @@
+services:
+  leochat:
+    build:
+      context: .
+    container_name: leochat-cli
+    network_mode: host

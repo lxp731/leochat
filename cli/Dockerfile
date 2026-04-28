@@ -4,28 +4,23 @@ WORKDIR /app
 
 COPY . .
 
-RUN cp /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list.d/debian.sources.bak && \
-    > /etc/apt/sources.list.d/debian.sources && \
-    echo 'Types: deb' >> /etc/apt/sources.list.d/debian.sources && \
-    echo 'URIs: https://mirrors.tuna.tsinghua.edu.cn/debian ' >> /etc/apt/sources.list.d/debian.sources && \
-    echo 'Suites: bookworm bookworm-updates' >> /etc/apt/sources.list.d/debian.sources && \
-    echo 'Components: main' >> /etc/apt/sources.list.d/debian.sources && \
-    echo 'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' >> /etc/apt/sources.list.d/debian.sources && \
-    echo '' >> /etc/apt/sources.list.d/debian.sources && \
-    echo 'Types: deb' >> /etc/apt/sources.list.d/debian.sources && \
-    echo 'URIs: https://mirrors.tuna.tsinghua.edu.cn/debian-security ' >> /etc/apt/sources.list.d/debian.sources && \
-    echo 'Suites: bookworm-security' >> /etc/apt/sources.list.d/debian.sources && \
-    echo 'Components: main' >> /etc/apt/sources.list.d/debian.sources && \
-    echo 'Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg' >> /etc/apt/sources.list.d/debian.sources && \
+RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+    sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources && \
+    sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources; \
+    else \
+    sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && \
+    sed -i 's/security.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list; \
+    fi && \
     apt update && \
     apt install -y --no-install-recommends \
     build-essential \
+    python3-dev \
     patchelf && \
     pip install --no-cache-dir -r requirements.txt && \
     rm -rf /var/lib/apt/lists/* && \
-    python -m nuitka --standalone --onefile app.py
+    python -m nuitka --standalone --onefile --output-filename=app.bin app.py
 
-FROM gcr.io/distroless/static-debian12
+FROM gcr.io/distroless/cc-debian12
 
 WORKDIR /app
 
