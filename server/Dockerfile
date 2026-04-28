@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS builder
+FROM python:3.14.4-slim AS builder
 
 WORKDIR /app
 
@@ -9,11 +9,11 @@ COPY . .
 RUN pip install uv && \
     uv sync
 
-FROM python:3.12-slim
+FROM python:3.14.4-slim
 
 WORKDIR /app
 
-COPY --from=builder /app/.venv/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /app/.venv/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 
 COPY --from=builder /app /app
 
