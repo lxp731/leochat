@@ -1,33 +1,16 @@
-# ChatRoom Android
+# chatroom_android
 
-Flutter 移动客户端，支持 Android / iOS / Web。
+A new Flutter project.
 
-## 启动
+## Getting Started
 
-```bash
-cd android
-flutter pub get
-flutter run
-```
+This project is a starting point for a Flutter application.
 
-## 配置
+A few resources to get you started if this is your first Flutter project:
 
-服务器地址通过编译常量设置，修改 `lib/main.dart`：
+- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
+- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
 
-```dart
-const String kServerUrl = String.fromEnvironment(
-  'CHAT_SERVER',
-  defaultValue: 'http://10.0.2.2:5000',  // Android 模拟器 → 宿主机
-);
-```
-
-或编译时指定：
-
-```bash
-flutter run --dart-define=SERVER_IP=192.168.1.45 --dart-define=SERVER_PORT=5000 --release
-```
-
-## 依赖
-
-- Flutter SDK ≥ 3.8
-- `socket_io_client`
+For help getting started with Flutter development, view the
+[online documentation](https://docs.flutter.dev/), which offers tutorials,
+samples, guidance on mobile development, and a full API reference.

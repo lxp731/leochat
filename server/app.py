@@ -15,8 +15,6 @@ from flask_socketio import SocketIO, emit # type: ignore
 SECRET_KEY = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 CHAT_DEBUG = os.environ.get("CHAT_DEBUG", "false").lower() in ("1", "true", "yes")
 CHAT_PORT = int(os.environ.get("CHAT_PORT", "5000"))
-CERT_PATH = os.environ.get("CERT_PATH", "certs/fullchain.pem")
-KEY_PATH = os.environ.get("KEY_PATH", "certs/privkey.pem")
 MAX_MSG_LEN = 2000
 MAX_NAME_LEN = 20
 RATE_WINDOW = 2          # 速率限制窗口 (秒)
@@ -134,11 +132,5 @@ def handle_message(data):
 
 
 if __name__ == "__main__":
-    ssl_context = None
-    if os.path.exists(CERT_PATH) and os.path.exists(KEY_PATH):
-        ssl_context = (CERT_PATH, KEY_PATH)
-        print(f"[*] SSL enabled using {CERT_PATH} and {KEY_PATH}")
-
     socketio.run(app, host="0.0.0.0", port=CHAT_PORT,
-                 debug=CHAT_DEBUG, allow_unsafe_werkzeug=True,
-                 ssl_context=ssl_context)
+                 debug=CHAT_DEBUG, allow_unsafe_werkzeug=True)

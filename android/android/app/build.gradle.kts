@@ -21,7 +21,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.chatroom_android"
+        applicationId = "com.leochat.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
 //        minSdk = flutter.minSdkVersion
@@ -32,6 +32,14 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+    }
+
+
+    applicationVariants.all {
+        outputs.all {
+            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            output.outputFileName = "Leochat.apk"
+        }
     }
 
     buildTypes {
