@@ -1,274 +1,53 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ChatRoom</title>
-<style>
-  :root {
-    --bg: #1a1b2e;
-    --sidebar-bg: #12131c;
-    --input-bg: #252640;
-    --bubble-other: #2a2b45;
-    --bubble-self: #3b4bcc;
-    --text: #d4d4e6;
-    --text-dim: #7c7d9c;
-    --text-bright: #f0f0ff;
-    --accent: #5b6af0;
-    --danger: #e74c5e;
-    --border: #2a2b40;
-  }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: var(--bg); color: var(--text);
-    height: 100dvh; display: flex; overflow: hidden;
-  }
-
-  /* ── Sidebar ───────────────────── */
-  .sidebar {
-    width: 260px; background: var(--sidebar-bg);
-    display: flex; flex-direction: column;
-    border-right: 1px solid var(--border); flex-shrink: 0;
-  }
-  .sidebar-header { padding: 20px 16px 12px; border-bottom: 1px solid var(--border); }
-  .sidebar-header h2 { font-size: 18px; font-weight: 700; color: var(--text-bright); display: flex; align-items: center; gap: 8px; }
-  .sidebar-header .dot { width: 10px; height: 10px; border-radius: 50%; background: #4ade80; display: inline-block; box-shadow: 0 0 6px rgba(74,222,128,.5); }
-  .online-count { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
-  .user-list { flex: 1; overflow-y: auto; padding: 8px; }
-  .user-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; color: var(--text-dim); font-size: 14px; }
-  .user-item:hover { background: rgba(255,255,255,.04); }
-  .user-avatar-sidebar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, var(--accent),#8b5cf6); display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: #fff; flex-shrink: 0; }
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; margin-left: auto; background: #4ade80; }
-  .sidebar-footer { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text-dim); }
-
-  /* ── Main ──────────────────────── */
-  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .chat-header { padding: 16px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
-  .chat-header h3 { font-size: 16px; color: var(--text-bright); }
-  .chat-header .conn-status { font-size: 12px; display: flex; align-items: center; gap: 6px; }
-
-  .messages {
-    flex: 1; overflow-y: auto; padding: 20px 24px;
-    display: flex; flex-direction: column; gap: 1px; scroll-behavior: smooth;
-  }
-  .messages::-webkit-scrollbar { width: 6px; }
-  .messages::-webkit-scrollbar-track { background: transparent; }
-  .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
-  .msg-date-divider { text-align: center; margin: 16px 0 8px; font-size: 11px; color: var(--text-dim); }
-  .msg-date-divider span { background: var(--bg); padding: 2px 12px; border-radius: 10px; border: 1px solid var(--border); }
-  .msg-system { text-align: center; margin: 8px 0; font-size: 12px; color: var(--text-dim); }
-  .msg-system i { background: rgba(255,255,255,.04); padding: 4px 14px; border-radius: 12px; }
-  .msg-error { text-align: center; margin: 8px 0; font-size: 12px; color: var(--danger); }
-
-  /* ── 消息行 ────────────────────── */
-  .msg-row { display: flex; gap: 8px; padding: 6px 12px; align-items: flex-end; }
-  .msg-row-me { justify-content: flex-end; }
-
-  /* 头像 + 名字 组 */
-  .msg-avatar-wrap {
-    display: flex; flex-direction: column; align-items: center; gap: 2px;
-    min-width: 44px; flex-shrink: 0;
-  }
-  .msg-avatar-wrap .msg-user {
-    font-weight: 600; font-size: 12px; color: var(--text-dim);
-    max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    text-align: center;
-  }
-  .msg-avatar-wrap .msg-avatar {
-    width: 36px; height: 36px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 14px; font-weight: 700; color: #fff;
-  }
-
-  /* 气泡 + 时间 组 */
-  .msg-bubble-wrap {
-    display: flex; align-items: flex-end; gap: 6px; max-width: 65%; min-width: 0;
-  }
-  .msg-row-me .msg-bubble-wrap { flex-direction: row-reverse; }
-
-  .msg-time {
-    font-size: 11px; color: var(--text-dim); white-space: nowrap;
-    padding-bottom: 4px; flex-shrink: 0;
-  }
-
-  .msg-bubble {
-    position: relative;
-    padding: 8px 14px;
-    border-radius: 14px;
-    font-size: 14px; line-height: 1.55; word-break: break-word;
-    background: var(--bubble-other); color: var(--text);
-  }
-  .msg-row-me .msg-bubble { background: var(--bubble-self); }
-
-  /* 小箭头 */
-  .msg-bubble::before {
-    content: ''; position: absolute; bottom: 8px;
-    width: 0; height: 0;
-    border-top: 6px solid transparent;
-    border-bottom: 6px solid transparent;
-  }
-  .msg-row:not(.msg-row-me) .msg-bubble::before {
-    left: -6px; border-right: 8px solid var(--bubble-other);
-  }
-  .msg-row-me .msg-bubble::before {
-    right: -6px; border-left: 8px solid var(--bubble-self);
-  }
-
-  /* ── Input ─────────────────────── */
-  .input-area { padding: 12px 24px 16px; border-top: 1px solid var(--border); }
-  .input-row { display: flex; gap: 10px; align-items: flex-end; }
-  .input-row input { flex: 1; background: var(--input-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; color: var(--text-bright); font-size: 14px; outline: none; transition: border .2s; }
-  .input-row input:focus { border-color: var(--accent); }
-  .input-row input::placeholder { color: var(--text-dim); }
-  .input-row .name-input { width: 120px; flex: none; }
-  .btn-send { width: 44px; height: 44px; border-radius: 10px; background: var(--accent); border: none; color: #fff; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-  .btn-send:hover { background: #4a5adb; }
-
-  .scroll-btn { position: fixed; bottom: 90px; right: 40px; width: 36px; height: 36px; border-radius: 50%; background: var(--accent); border: none; color: #fff; font-size: 16px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.3); display: none; align-items: center; justify-content: center; z-index: 10; }
-  .scroll-btn.visible { display: flex; }
-  .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); background: var(--danger); color: #fff; padding: 10px 24px; border-radius: 8px; font-size: 13px; z-index: 100; opacity: 0; pointer-events: none; }
-  .toast.show { opacity: 1; }
-
-  @media (max-width: 640px) {
-    .sidebar { display: none; } .messages { padding: 12px; }
-    .input-area { padding: 8px 12px 12px; } .input-row .name-input { width: 90px; }
-    .msg-bubble-wrap { max-width: 80%; }
-  }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatRoom | 实时在线聊天室</title>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Main Styles -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
 </head>
 <body>
 
-<aside class="sidebar">
-  <div class="sidebar-header">
-    <h2><span class="dot" id="statusDot"></span> ChatRoom</h2>
-    <div class="online-count" id="onlineCount">— online</div>
-  </div>
-  <div class="user-list" id="userList"></div>
-  <div class="sidebar-footer" id="sidebarFooter">Connecting…</div>
-</aside>
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h2><span class="dot" id="statusDot"></span> ChatRoom</h2>
+            <div class="online-count" id="onlineCount">— online</div>
+        </div>
+        <div class="user-list" id="userList">
+            <!-- Online users will appear here -->
+        </div>
+        <div class="sidebar-footer" id="sidebarFooter">正在连接...</div>
+    </aside>
 
-<main class="main">
-  <header class="chat-header">
-    <h3>💬 公共大厅</h3>
-    <span class="conn-status" id="connStatus">🔴 未连接</span>
-  </header>
-  <div class="messages" id="messages"></div>
-  <div class="input-area">
-    <div class="input-row">
-      <input type="text" class="name-input" id="username" placeholder="昵称" maxlength="20">
-      <input type="text" id="message" placeholder="输入消息…" maxlength="2000">
-      <button class="btn-send" id="sendBtn" title="发送 (Enter)">➤</button>
-    </div>
-  </div>
-</main>
-<button class="scroll-btn" id="scrollBtn" title="滚到底部">↓</button>
-<div class="toast" id="toast"></div>
+    <main class="main">
+        <header class="chat-header">
+            <h3>💬 公共大厅</h3>
+            <span class="conn-status" id="connStatus">🔴 未连接</span>
+        </header>
+        
+        <div class="messages" id="messages">
+            <!-- Messages will appear here -->
+        </div>
 
-<script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
-<script>
-  const me={name:''};const users=new Map();
-  let connected=false,lastDate='';
-  const $=id=>document.getElementById(id);
-  const msgEl=$('messages'),msgInput=$('message'),userInput=$('username'),
-        sendBtn=$('sendBtn'),scrollBtn=$('scrollBtn'),toast=$('toast'),
-        socket=io();
+        <div class="input-area">
+            <div class="input-row">
+                <input type="text" class="name-input" id="username" placeholder="您的昵称" maxlength="20">
+                <input type="text" id="message" placeholder="输入消息，按回车发送..." maxlength="2000">
+                <button class="btn-send" id="sendBtn" title="发送 (Enter)">➤</button>
+            </div>
+        </div>
+    </main>
 
-  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  const now=()=>new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
-  const dstr=()=>new Date().toLocaleDateString('zh-CN',{month:'long',day:'numeric',weekday:'short'});
-  const avColor=n=>{let h=0;for(let c of n)h=c.charCodeAt(0)+((h<<5)-h);return `hsl(${Math.abs(h)%360},55%,50%)`;};
-  const init=n=>(n||'?').slice(0,2).toUpperCase();
+    <button class="scroll-btn" id="scrollBtn" title="滚到底部">↓</button>
+    <div class="toast" id="toast"></div>
 
-  function checkDate(){
-    const d=dstr();if(d===lastDate)return;lastDate=d;
-    const div=document.createElement('div');div.className='msg-date-divider';
-    div.innerHTML=`<span>${d}</span>`;msgEl.appendChild(div);
-  }
-
-  function appendMsg(user,text,cls,time){
-    checkDate();
-    if(cls==='system'){
-      const d=document.createElement('div');d.className='msg-system';
-      d.innerHTML=`<i>${text}</i>`;msgEl.appendChild(d);return;
-    }
-    if(cls==='error'){
-      const d=document.createElement('div');d.className='msg-error';
-      d.textContent=text;msgEl.appendChild(d);return;
-    }
-
-    const isMe=!!(user&&me.name&&user===me.name);
-    const row=document.createElement('div');
-    row.className=`msg-row${isMe?' msg-row-me':''}`;
-
-    // ① 头像区：名字在上，头像在下
-    const aw=document.createElement('div');aw.className='msg-avatar-wrap';
-    const nm=document.createElement('div');nm.className='msg-user';
-    nm.style.color=avColor(user);nm.textContent=esc(user);
-    const av=document.createElement('div');av.className='msg-avatar';
-    av.style.background=avColor(user);av.textContent=init(user);
-    aw.appendChild(nm);aw.appendChild(av);
-
-    // ② 气泡区：时间 + 气泡（他人：时间在右 | 自己：时间在左）
-    const bw=document.createElement('div');bw.className='msg-bubble-wrap';
-    const t=document.createElement('span');t.className='msg-time';t.textContent=time||now();
-    const bb=document.createElement('div');bb.className='msg-bubble';
-    const tx=document.createElement('span');tx.textContent=esc(text);
-    bb.appendChild(tx);
-
-    bw.appendChild(bb); bw.appendChild(t);  // DOM: 气泡 → 时间
-    // 自己: row-reverse 反转显示为 时间←气泡 | 他人: 正常显示为 气泡→时间
-
-    // ③ 组装行
-    // 自己: [bubble+time][avatar+name]
-    // 他人: [avatar+name][bubble+time]
-    if(isMe){row.appendChild(bw);row.appendChild(aw);}
-    else    {row.appendChild(aw);row.appendChild(bw);}
-    msgEl.appendChild(row);
-    maybeScroll();
-  }
-
-  function maybeScroll(){
-    const B=msgEl.scrollHeight-msgEl.scrollTop-msgEl.clientHeight<80;
-    if(B)msgEl.scrollTop=msgEl.scrollHeight;
-    scrollBtn.classList.toggle('visible',!B&&msgEl.scrollHeight>msgEl.clientHeight+100);
-  }
-  function showToast(m){toast.textContent=m;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2500);}
-  function updateUL(){
-    $('onlineCount').textContent=`${users.size} 人在线`;
-    $('userList').innerHTML=Array.from(users.values()).map(u=>`
-      <div class="user-item"><div class="user-avatar-sidebar" style="background:${avColor(u)}">${esc(init(u))}</div><span>${esc(u)}</span><span class="status-dot"></span></div>`).join('');
-  }
-
-  socket.on('connect',()=>{
-    connected=true;$('statusDot').style.background='#4ade80';$('connStatus').innerHTML='🟢 已连接';$('sidebarFooter').textContent='已连接';
-    if(me.name)socket.emit('join',{user:me.name});
-  });
-  socket.on('disconnect',()=>{connected=false;users.clear();updateUL();$('statusDot').style.background='#ef4444';$('connStatus').innerHTML='🔴 断线';$('sidebarFooter').textContent='连接已断开';});
-  socket.on('message',data=>{appendMsg(data.user,data.text,'msg',data.time);
-    if(data.user&&data.user!=='System'&&!users.has(data.user)){users.set(data.user,data.user);updateUL();}
-  });
-  socket.on('system',data=>{appendMsg('',data.text,'system');
-    const t=data.text||'';
-    if(t.includes('joined')){const m=t.match(/(.+?)\s+has joined/);if(m){users.set(m[1],m[1]);updateUL();}}
-    else if(t.includes('left')){const m=t.match(/(.+?)\s+has left/);if(m){users.delete(m[1]);updateUL();}}
-  });
-  socket.on('error',data=>showToast(data.text||'Error'));
-  socket.on('userlist',data=>{data.users.forEach(u=>users.set(u,u));updateUL();});
-
-  function send(){
-    const name=userInput.value.trim(),text=msgInput.value.trim();
-    if(!name)return showToast('请先输入昵称');if(!text)return;if(!connected)return showToast('未连接到服务器');
-    me.name=name;socket.emit('send_message',{user:name,text,time:now()});
-    msgInput.value='';msgInput.focus();
-  }
-  sendBtn.addEventListener('click',send);
-  msgInput.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}});
-  scrollBtn.addEventListener('click',()=>{msgEl.scrollTop=msgEl.scrollHeight;});
-  msgEl.addEventListener('scroll',maybeScroll);
-  userInput.value=localStorage.getItem('chatroom_name')||'';
-  userInput.addEventListener('change',()=>localStorage.setItem('chatroom_name',userInput.value.trim()));
-</script>
+    <!-- Scripts -->
+    <script src="https://cdn.socket.io/4.3.2/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 </body>
 </html>

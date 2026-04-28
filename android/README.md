@@ -24,7 +24,7 @@ const String kServerUrl = String.fromEnvironment(
 或编译时指定：
 
 ```bash
-flutter run --dart-define=CHAT_SERVER=http://your-server:5000
+flutter run --dart-define=SERVER_IP=192.168.1.45 --dart-define=SERVER_PORT=5000 --release
 ```
 
 ## 依赖
