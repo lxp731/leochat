@@ -6,7 +6,7 @@ import 'dart:math' as math;
 
 const String serverIp = String.fromEnvironment('SERVER_IP', defaultValue: '192.168.1.45');
 const String serverPort = String.fromEnvironment('SERVER_PORT', defaultValue: '5000');
-const String kServerUrl = 'http://:';
+const String kServerUrl = 'http://$serverIp:$serverPort';
 
 void main() {
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
@@ -177,14 +177,19 @@ class _ChatScreenState extends State<ChatScreen> {
     _connect();
   }
 
-  void _connect() {
-    _socket = IO.io(kServerUrl, <String, dynamic>{
+  void _connect() { print("Attempting to connect to: $kServerUrl");
+    _socket = IO.io(kServerUrl, {
       'transports': ['websocket'],
       'autoConnect': false,
     });
 
     _socket.onConnect((_) => setState(() => _connected = true));
-    _socket.onDisconnect((_) => setState(() => _connected = false));
+    
+    _socket.onConnectError((data) => print('Connect Error: $data'));
+    _socket.onConnectTimeout((data) => print('Connect Timeout: $data'));
+    _socket.onError((data) => print('Socket Error: $data'));
+
+    
     _socket.on('message', (data) {
       if (data is Map) {
         setState(() => _messages.add(Map<String, dynamic>.from(data)));
