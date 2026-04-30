@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.x'
+          channel: 'stable'
+          cache: true
+
+      - name: Get dependencies
+        run: |
+          cd android
+          flutter pub get
+
+      - name: Build APK
+        run: |
+          cd android
+          flutter build apk --release
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: android/build/app/outputs/flutter-apk/app-release.apk
+
+  build-cli:
+    name: Build Linux CLI Binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3-dev patchelf
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: '3.12'
+          enable-cache: true
+
+      - name: Install dependencies
+        run: |
+          cd cli
+          uv sync
+
+      - name: Build with Nuitka
+        run: |
+          cd cli
+          uv run python -m nuitka --standalone --onefile --output-filename=leochat-cli-linux app.py
+
+      - name: Upload CLI Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-binary
+          path: cli/leochat-cli-linux
+
+  release:
+    name: Create GitHub Release
+    needs: [build-android, build-cli]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-apk
+          path: .
+
+      - name: Download CLI Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-binary
+          path: .
+
+      - name: Rename Files
+        run: |
+          mv app-release.apk leochat-android.apk
+          chmod +x leochat-cli-linux
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            leochat-android.apk
+            leochat-cli-linux
+          generate_release_notes: true
