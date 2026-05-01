@@ -6,7 +6,7 @@ Leochat CLI — prompt_toolkit TUI
         [ ── 分隔线 ── ]
         [ 󰞷 username ❯ 输入框 ]
 """
-import os
+import argparse
 import math
 import threading
 from datetime import datetime, timezone, timedelta
@@ -22,25 +22,11 @@ from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.application.current import get_app
 from wcwidth import wcswidth
 
+from config import resolve, save, server_url, parse_server_addr, is_first_run, config_path
+
 # ── 环境 ──────────────────────────────────────────────
 
 CST = timezone(timedelta(hours=8))
-
-
-def _load_env():
-    # 仅从当前目录加载 .env
-    env_path = os.path.join(os.path.dirname(__file__), ".env")
-    if os.path.exists(env_path):
-        with open(env_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ[k.strip()] = v.strip()
-
-
-_load_env()
-SERVER_URL = os.environ.get("CHAT_SERVER", "http://127.0.0.1:5000")
 
 
 def _now() -> str:
@@ -80,8 +66,9 @@ Frag = Tuple[str, str]  # (style_class, text)
 # ── ChatClient ────────────────────────────────────────
 
 class ChatClient:
-    def __init__(self, username: str):
+    def __init__(self, username: str, server_url: str):
         self.username = username
+        self.server_url = server_url
         self.sio: Any = socketio.Client(
             reconnection=True,
             reconnection_attempts=0,
@@ -130,7 +117,7 @@ class ChatClient:
         def connect():
             self.connected = True
             sio.emit("join", {"user": self.username})
-            self._add({"type": "info", "text": f"󰄬 已连接至服务器: {SERVER_URL}"})
+            self._add({"type": "info", "text": f"󰄬 已连接至服务器: {self.server_url}"})
 
         @sio.event
         def disconnect():
@@ -344,7 +331,7 @@ class ChatClient:
     def run(self):
         def connect_sio():
             try:
-                self.sio.connect(SERVER_URL, wait_timeout=5)
+                self.sio.connect(self.server_url, wait_timeout=5)
             except Exception as exc:
                 self._add({"type": "error", "text": f"󰅚 连接失败: {exc}"})
 
@@ -361,21 +348,69 @@ class ChatClient:
 
 
 def main() -> None:
-    print("\033[2J\033[H", end="")
-    print("╭──────────────────────────╮")
-    print("│     💬 Leochat CLI        │")
-    print("╰──────────────────────────╯")
-    print()
-    try:
-        username = input("󰙯 请输入您的昵称: ").strip()
-    except (KeyboardInterrupt, EOFError):
-        return
+    # ── CLI 参数 ──
+    parser = argparse.ArgumentParser(
+        description="Leochat CLI — 轻量聊天终端客户端"
+    )
+    parser.add_argument(
+        "--server", "-s",
+        help="服务器地址 (host:port)，例如 192.168.1.100:5000",
+    )
+    parser.add_argument("--user", "-u", help="用户名")
+    args = parser.parse_args()
 
-    if not username:
-        print("昵称不能为空")
-        return
+    # ── 加载配置（优先级：默认值 → config.toml → 环境变量）──
+    config = resolve()
 
-    client = ChatClient(username)
+    # ── CLI 参数最终覆盖 ──
+    if args.server:
+        host, port = parse_server_addr(args.server)
+        config["server"]["host"] = host
+        config["server"]["port"] = port
+    if args.user:
+        config["user"]["name"] = args.user
+
+    # ── 首次运行：交互式配置 ──
+    first_run = not config["user"]["name"]
+
+    if first_run:
+        print("\033[2J\033[H", end="")
+        print("╭─────────────────────────────────────╮")
+        print("│          💬 Leochat CLI              │")
+        print("│       首次运行 — 配置向导            │")
+        print("╰─────────────────────────────────────╯")
+        print()
+
+        try:
+            username = input("󰙯 请输入您的昵称: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            return
+        if not username:
+            print("昵称不能为空")
+            return
+        config["user"]["name"] = username
+
+        srv = config["server"]
+        try:
+            server_input = input(
+                f"󰒋 服务器地址 [{srv['host']}:{srv['port']}]: "
+            ).strip()
+        except (KeyboardInterrupt, EOFError):
+            return
+        if server_input:
+            host, port = parse_server_addr(server_input)
+            config["server"]["host"] = host
+            config["server"]["port"] = port
+
+        # 持久化
+        save(config)
+        print()
+        print(f"✓ 配置已保存至 {config_path()}")
+        print(f"  下次启动将直接连接 {server_url(config)}")
+        print()
+
+    url = server_url(config)
+    client = ChatClient(config["user"]["name"], url)
     client.run()
     print("\n再见! 👋")
 
