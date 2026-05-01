@@ -1,5 +1,5 @@
 """
-ChatRoom CLI — prompt_toolkit TUI
+Leochat CLI — prompt_toolkit TUI
 ═══════════════════════════════════════════════════════════
 布局:  [ 标题栏 ]
         [ 消息区 (可滚动) ]
@@ -173,7 +173,7 @@ class ChatClient:
             ("class:header.box", "╭" + "─" * box_w + "╮\n"),
             (
                 "class:header.title",
-                f"│ {'󰭹 ChatRoom CLI (TUI)':^{box_w}} │\n",
+                f"│ {'󰭹 Leochat CLI (TUI)':^{box_w}} │\n",
             ),
             (
                 "class:header.welcome",

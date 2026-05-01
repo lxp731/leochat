@@ -1,4 +1,4 @@
-# ChatRoom Server
+# Leochat Server
 
 Flask + Socket.IO 实时聊天服务器。
 

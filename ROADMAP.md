@@ -1,4 +1,4 @@
-# ChatRoom — 项目路线图
+# Leochat — 项目路线图
 
 > 轻量级自托管实时聊天室，支持 Web / CLI / Android 三端接入。
 
@@ -8,7 +8,7 @@
 
 | 项目 | 详情 |
 |------|------|
-| **应用名称** | ChatRoom |
+| **应用名称** | Leochat |
 | **技术栈** | Python (Flask + Socket.IO), Flutter (Dart), prompt_toolkit |
 | **协议** | Socket.IO (WebSocket) |
 | **部署方案** | Docker + docker-compose |

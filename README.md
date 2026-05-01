@@ -1,9 +1,9 @@
-# ChatRoom — 多端实时聊天室
+# Leochat — 多端实时聊天室
 
 一个轻量级、自托管的实时聊天应用，支持 Web / 终端 / 移动端三端接入。
 
 ```
-chatroom/
+leochat/
 ├── server/          Python 后端 (Flask + Socket.IO)
 ├── cli/             终端客户端 (Rich + prompt_toolkit)
 └── android/         Flutter 移动客户端 (Android / iOS / Web)
@@ -59,7 +59,7 @@ uv run python app.py
 ```bash
 cd android
 flutter pub get
-flutter run
+flutter run --dart-define=SERVER_IP=你的服务器IP --dart-define=SERVER_PORT=5000
 ```
 
 ---
@@ -131,4 +131,4 @@ docker compose up -d
 
 ## License
 
-MIT
+[Apache](LICENSE)

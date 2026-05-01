@@ -1,4 +1,4 @@
-# ChatRoom CLI
+# Leochat CLI
 
 基于 Rich + prompt_toolkit 的终端聊天客户端。
 
