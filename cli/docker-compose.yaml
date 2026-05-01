@@ -3,4 +3,6 @@ services:
     build:
       context: .
     container_name: leochat-cli
-    network_mode: host
+    # Removed network_mode: host for better security isolation
+    stdin_open: true
+    tty: true

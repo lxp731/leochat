@@ -3,27 +3,24 @@ Leochat CLI — prompt_toolkit TUI
 ═══════════════════════════════════════════════════════════
 布局:  [ 标题栏 ]
         [ 消息区 (可滚动) ]
-        [   3 行间隔   ]
         [ ── 分隔线 ── ]
         [ 󰞷 username ❯ 输入框 ]
-
-消息对齐: 短用户名自动补空格，确保所有 󰭹 对齐到同一列。
 """
 import os
 import threading
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, cast
 
-import socketio # type: ignore
-from prompt_toolkit import Application # type: ignore
-from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, ScrollablePane # type: ignore
-from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl # type: ignore
-from prompt_toolkit.key_binding import KeyBindings # type: ignore
-from prompt_toolkit.styles import Style # type: ignore
-from prompt_toolkit.buffer import Buffer # type: ignore
-from prompt_toolkit.layout.screen import Point # type: ignore
-from prompt_toolkit.application.current import get_app # type: ignore
-from wcwidth import wcswidth # type: ignore
+import socketio
+from prompt_toolkit import Application
+from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, ScrollablePane
+from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.styles import Style
+from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.data_structures import Point
+from prompt_toolkit.application.current import get_app
+from wcwidth import wcswidth
 
 # ── 环境 ──────────────────────────────────────────────
 
@@ -31,7 +28,8 @@ CST = timezone(timedelta(hours=8))
 
 
 def _load_env():
-    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    # 仅从当前目录加载 .env
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
     if os.path.exists(env_path):
         with open(env_path, encoding="utf-8") as f:
             for line in f:
@@ -42,13 +40,11 @@ def _load_env():
 
 
 _load_env()
-SERVER_IP = os.environ.get("SERVER_IP", "127.0.0.1")
-SERVER_PORT = os.environ.get("SERVER_PORT", "5000")
-SERVER_URL = os.environ.get("CHAT_SERVER", f"http://{SERVER_IP}:{SERVER_PORT}")
+SERVER_URL = os.environ.get("CHAT_SERVER", "http://127.0.0.1:5000")
 
 
 def _now() -> str:
-    return datetime.now(CST).strftime("%H:%M")
+    return datetime.now(CST).strftime("%H:%M:%S")
 
 
 def _display_w(s: str) -> int:
@@ -63,14 +59,14 @@ APP_STYLE = Style.from_dict(
         "header.box": "bold cyan",
         "header.title": "bold cyan",
         "header.welcome": "cyan",
-        "msg.time": "cyan",
+        "msg.time": "#888888",
         "msg.self": "bold green",
         "msg.other": "bold yellow",
-        "msg.text": "",
-        "msg.pad": "",  # 对齐空格，无色
         "msg.system": "bold magenta",
         "msg.error": "bold red",
-        "msg.info": "bold magenta",
+        "msg.info": "bold blue",
+        "msg.pad": "",
+        "msg.text": "",
         "input.prompt": "bold cyan",
         "separator": "#555555",
     }
@@ -86,99 +82,107 @@ Frag = Tuple[str, str]  # (style_class, text)
 class ChatClient:
     def __init__(self, username: str):
         self.username = username
-        self.sio = socketio.Client(reconnection=False)
+        self.sio: Any = socketio.Client(
+            reconnection=True,
+            reconnection_attempts=0,
+            reconnection_delay=1,
+            reconnection_delay_max=10,
+        )
         self.exit_flag = False
         self.connected = False
-        self._users: list = []
-        # 消息存储为原始 dict，格式化在 _messages_lines 中统一处理
-        self._messages: List[Dict[str, Any]] = []
+        self._users: List[str] = []
+        
         self._lock = threading.Lock()
         self._app: Application | None = None
+        
+        self._messages: List[Dict[str, Any]] = []
         self._input_buffer: Buffer | None = None
+        
         self._prompt_str = f"󰞷 {self.username} ❯ "
+        self._max_user_w = 0
+        self._rendered_lines = 1  # 缓存最后一次渲染的行数，防止索引越界
+        
         self._register_events()
 
-    # ── 线程安全 ──────────────────────────────────────
+    # ── 消息处理 ──────────────────────────────────────
 
-    def _add(self, msg: Dict[str, Any]):
+    def _add(self, msg: Dict[str, Any]) -> None:
         """存储原始消息 dict，格式：{type, text, time?, user?, self?}"""
         with self._lock:
             self._messages.append(msg)
+            # 限制在内存中只保留最新的 1000 条消息
+            if len(self._messages) > 1000:
+                self._messages = self._messages[-1000:]
+        self._invalidate()
 
-    def _invalidate(self):
-        """从 socketio 线程触发 UI 刷新"""
+    def _invalidate(self) -> None:
         try:
-            if self._app and self._app.is_running:
-                self._app.invalidate()
-        except Exception:
+            app = self._app
+            if app is not None and app.is_running:
+                app.invalidate()
+        except:
             pass
 
     # ── socketio 事件 ─────────────────────────────────
 
-    def _register_events(self):
-        @self.sio.event
+    def _register_events(self) -> None:
+        sio: Any = self.sio
+
+        @sio.event
         def connect():
             self.connected = True
-            self.sio.emit("join", {"user": self.username})
+            sio.emit("join", {"user": self.username})
             self._add({"type": "info", "text": f"󰄬 已连接至服务器: {SERVER_URL}"})
-            self._invalidate()
 
-        @self.sio.event
+        @sio.event
         def disconnect():
             self.connected = False
-            self._add({"type": "error", "text": "󰅚 与服务器断开连接"})
-            self._invalidate()
+            self._add({"type": "error", "text": "󰅚 与服务器断开连接，尝试自动重连..."})
 
-        @self.sio.on("message")
+        @sio.event
+        def reconnect():
+            self._add({"type": "info", "text": "󰄬 重新连接成功"})
+
+        @sio.on("message")
         def on_message(data):
-            self._add(
-                {
+            if isinstance(data, dict):
+                msg = {
                     "type": "chat",
                     "time": data.get("time", _now()),
                     "user": data.get("user", "???"),
                     "text": data.get("text", ""),
                     "self": data.get("user") == self.username,
                 }
-            )
-            self._invalidate()
+                self._add(msg)
 
-        @self.sio.on("system")
+        @sio.on("system")
         def on_system(data):
-            content = data.get("text", "")
-            icon = "󰋼"
-            if "joined" in content:
-                icon = "󰶼"
-            elif "left" in content:
-                icon = "󰶽"
-            self._add({"type": "system", "text": f"{icon} {content}"})
-            self._invalidate()
+            if isinstance(data, dict):
+                self._add({"type": "system", "text": f"󰋼 {data.get('text', '')}"})
 
-        @self.sio.on("error")
+        @sio.on("error")
         def on_error(data):
-            err = data.get("text", "错误")
-            self._add({"type": "error", "text": f"󰅚 {err}"})
-            self._invalidate()
+            if isinstance(data, dict):
+                self._add({"type": "error", "text": f"󰅚 {data.get('text', '未知错误')}"})
 
-        @self.sio.on("userlist")
+        @sio.on("userlist")
         def on_userlist(data):
-            self._users = list(data.get("users", []))
+            if isinstance(data, dict):
+                self._users = list(data.get("users", []))
 
-    # ── UI 回调（在 UI 线程中调用）────────────────────
+    # ── UI 组件 ───────────────────────────────────────
 
     def _header_lines(self) -> List[Frag]:
-        app = get_app()
-        w = app.output.get_size().columns
+        try:
+            app = cast(Application, get_app())
+            w = app.output.get_size().columns
+        except:
+            w = 80
         box_w = max(w - 2, 10)
         return [
             ("class:header.box", "╭" + "─" * box_w + "╮\n"),
-            (
-                "class:header.title",
-                f"│ {'󰭹 Leochat CLI (TUI)':^{box_w}} │\n",
-            ),
-            (
-                "class:header.welcome",
-                f"│ {'󱑎 欢迎, ' + self.username + '!':^{box_w}} │\n",
-            ),
+            ("class:header.title", f"│ {'󰭹 Leochat CLI (TUI)':^{box_w}} │\n"),
+            ("class:header.welcome", f"│ {'󱑎 欢迎, ' + self.username + '!':^{box_w}} │\n"),
             ("class:header.box", "╰" + "─" * box_w + "╯"),
         ]
 
@@ -219,94 +223,74 @@ class ChatClient:
             elif t == "error":
                 result.append(("class:msg.error", m["text"]))
             result.append(("", "\n"))
+        
+        # 为了美观，如果没有消息则显示占位符
+        if not result:
+            result.append(("class:msg.time", "没有消息...\n"))
+            
+        # ── 第三遍：精确计算真实的换行符数量，保证光标定位不越界 ──
+        newline_count = sum(text.count('\n') for _, text in result)
+        self._target_y = newline_count
+        
         return result
-
-    def _msg_line_count(self) -> int:
-        with self._lock:
-            return len(self._messages)
-
-    def _msg_cursor_pos(self):
-        n = self._msg_line_count()
-        if n == 0:
-            return None
-        return Point(x=0, y=n)
 
     def _prompt_lines(self) -> List[Frag]:
         return [("class:input.prompt", self._prompt_str)]
 
-    # ── 发送 ──────────────────────────────────────────
-
     def _send(self):
-        if self._input_buffer is None:
-            return
+        if not self._input_buffer: return
         text = self._input_buffer.text.strip()
-        if not text:
-            return
+        if not text: return
 
         if text.startswith("/"):
             cmd = text[1:].lower()
             if cmd in ("exit", "quit"):
                 self.exit_flag = True
-                if self._app:
-                    self._app.exit()
+                if self._app: self._app.exit()
                 return
             if cmd == "users":
                 ul = ", ".join(self._users) if self._users else "无"
-                self._add({"type": "info", "text": f"󰭿 在线用户: {ul}"})
-                self._invalidate()
+                self._add({"type": "info", "text": f"󰄬 在线用户: {ul}"})
                 self._input_buffer.text = ""
                 return
             if cmd == "help":
-                self._add({"type": "info", "text": "命令: /users /exit /help"})
-                self._invalidate()
+                self._add({"type": "info", "text": "󰄬 命令: /users /exit /help"})
                 self._input_buffer.text = ""
                 return
-            self._add({"type": "error", "text": f"未知命令: /{cmd}"})
-            self._invalidate()
+            self._add({"type": "error", "text": f"󰅚 未知命令: /{cmd}"})
             self._input_buffer.text = ""
             return
 
         if self.connected:
-            self.sio.emit(
-                "send_message",
-                {"user": self.username, "text": text, "time": _now()},
-            )
-
+            self.sio.emit("send_message", {"text": text})
+        else:
+            self._add({"type": "error", "text": "󰅚 未连接服务器，发送失败"})
+        
         self._input_buffer.text = ""
 
-    # ── 构建 TUI ──────────────────────────────────────
+    def _msg_cursor_pos(self) -> Point | None:
+        # 直接使用刚才渲染时计算出的最准确的行索引
+        y = getattr(self, '_target_y', 0)
+        return Point(x=0, y=y)
 
     def build_app(self) -> Application:
         kb = KeyBindings()
-
         @kb.add("enter")
-        def _(event):
-            self._send()
-
+        def _(event): self._send()
         @kb.add("c-c")
         @kb.add("c-d")
         def _(event):
             self.exit_flag = True
             event.app.exit()
 
-        self._input_buffer = Buffer(
-            name="input",
-            multiline=False,
-            accept_handler=lambda _: None,
-        )
+        self._input_buffer = Buffer(name="input", multiline=False, accept_handler=lambda _: False)
 
-        header = Window(
-            content=FormattedTextControl(self._header_lines),
-            height=4,
-            always_hide_cursor=True,
-            dont_extend_height=True,
-        )
-
+        header = Window(content=FormattedTextControl(self._header_lines), height=4, dont_extend_height=True)
+        
         messages = ScrollablePane(
             content=Window(
                 content=FormattedTextControl(
                     self._messages_lines,
-                    focusable=False,
                     get_cursor_position=self._msg_cursor_pos,
                 ),
                 wrap_lines=True,
@@ -314,59 +298,32 @@ class ChatClient:
             )
         )
 
-        spacer = Window(height=3, char=" ", always_hide_cursor=True)
-
-        divider = Window(
-            height=1,
-            char="─",
-            always_hide_cursor=True,
-            style="class:separator",
-        )
-
+        divider = Window(height=1, char="─", style="class:separator", dont_extend_height=True)
+        
         prompt_w = len(self._prompt_str)
-        input_row = VSplit(
-            [
-                Window(
-                    content=FormattedTextControl(self._prompt_lines),
-                    height=1,
-                    width=prompt_w,
-                    dont_extend_width=True,
-                    always_hide_cursor=True,
-                ),
-                Window(
-                    content=BufferControl(buffer=self._input_buffer),
-                    height=1,
-                ),
-            ],
-            height=1,
-        )
+        input_row = VSplit([
+            Window(content=FormattedTextControl(self._prompt_lines), width=prompt_w, dont_extend_width=True, always_hide_cursor=True),
+            Window(content=BufferControl(buffer=self._input_buffer)),
+        ], height=1)
 
-        root = HSplit([header, messages, spacer, divider, input_row])
+        root = HSplit([header, messages, divider, input_row])
 
         self._app = Application(
-            layout=Layout(root),
+            layout=Layout(root, focused_element=input_row),
             style=APP_STYLE,
             key_bindings=kb,
             full_screen=True,
-            mouse_support=False,
+            mouse_support=True,
         )
         return self._app
-
-    # ── 入口 ──────────────────────────────────────────
 
     def run(self):
         def connect_sio():
             try:
                 self.sio.connect(SERVER_URL, wait_timeout=5)
             except Exception as exc:
-                err = str(exc)
-                if "refused" in err.lower():
-                    self._add({"type": "error", "text": "无法连接服务器: 服务未启动"})
-                else:
-                    self._add({"type": "error", "text": f"无法连接服务器: {err}"})
-                self._invalidate()
+                self._add({"type": "error", "text": f"󰅚 连接失败: {exc}"})
 
-        self._add({"type": "info", "text": f"󰄬 正在连接 {SERVER_URL}..."})
         t = threading.Thread(target=connect_sio, daemon=True)
         t.start()
 
@@ -375,24 +332,19 @@ class ChatClient:
             app.run()
         finally:
             self.exit_flag = True
-            try:
-                self.sio.disconnect()
-            except Exception:
-                pass
+            try: self.sio.disconnect()
+            except: pass
 
-
-# ── CLI 入口 ──────────────────────────────────────────
 
 def main() -> None:
     print("\033[2J\033[H", end="")
     print("╭──────────────────────────╮")
-    print("│     💬 极简聊天室         │")
+    print("│     💬 Leochat CLI        │")
     print("╰──────────────────────────╯")
     print()
     try:
         username = input("󰙯 请输入您的昵称: ").strip()
     except (KeyboardInterrupt, EOFError):
-        print("\n已取消")
         return
 
     if not username:
