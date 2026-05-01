@@ -9,8 +9,8 @@ import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
-from flask import Flask, render_template, request # type: ignore
-from flask_socketio import SocketIO, emit # type: ignore
+from flask import Flask, render_template, request
+from flask_socketio import SocketIO, emit
 
 # ── 环境变量加载 ──────────────────────────────────────────
 def _load_env():
@@ -123,12 +123,13 @@ def index():
 # ── 连接 / 断线 ───────────────────────────────────────────
 @socketio.on("connect")
 def handle_connect(auth=None):
-    print(f"[+] {request.sid} connected")
+    sid = getattr(request, 'sid')
+    print(f"[+] {sid} connected")
 
 
 @socketio.on("disconnect")
 def handle_disconnect():
-    sid = request.sid
+    sid = getattr(request, 'sid')
     username = _sid_to_user.pop(sid, None)
     if username:
         _user_to_sids[username].discard(sid)
@@ -137,9 +138,11 @@ def handle_disconnect():
             emit("system", {"text": f"{username} has left the chat."}, broadcast=True)
         _broadcast_userlist()
     
-    # 清理限流相关的内存占用
-    _client_timestamps.pop(request.remote_addr, None)
-    _client_timestamps.pop(sid, None)
+    # 清理限流相关的内存占用 (类型收窄以消除 Pylance 警告)
+    if addr := request.remote_addr:
+        _client_timestamps.pop(addr, None)
+    if sid:
+        _client_timestamps.pop(sid, None)
     
     print(f"[-] {sid} disconnected ({username or 'unknown'})")
 
@@ -153,7 +156,7 @@ def handle_join(data):
     if not username:
         return
 
-    sid = request.sid
+    sid = getattr(request, 'sid')
     old_name = _sid_to_user.get(sid)
 
     if old_name and old_name != username:
@@ -171,7 +174,7 @@ def handle_join(data):
         # 推送历史消息给新加入的用户
         history = get_history()
         for msg in history:
-            emit("message", msg, room=sid)
+            emit("message", msg, to=sid)
             
     _broadcast_userlist()
 
@@ -182,10 +185,13 @@ def handle_message(data):
     if not isinstance(data, dict):
         return
 
-    sid = request.sid
+    sid = getattr(request, 'sid')
+    # 优先使用真实 IP 进行限速，防止通过重连（更换 SID）绕过限流
     rate_key = request.remote_addr or sid
     user = _sid_to_user.get(sid, "Anonymous")
     text = str(data.get("text", ""))[:MAX_MSG_LEN]
+    
+    # 消息时间戳统一由服务端生成，防止伪造 (提前修复 P1 建议)
     ts = _now_str()
 
     if not text.strip():
@@ -204,5 +210,6 @@ def handle_message(data):
 
 
 if __name__ == "__main__":
+    # 仅在调试模式下允许 unsafe_werkzeug
     socketio.run(app, host="0.0.0.0", port=CHAT_PORT,
                  debug=CHAT_DEBUG, allow_unsafe_werkzeug=CHAT_DEBUG)
