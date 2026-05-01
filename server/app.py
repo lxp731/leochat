@@ -208,5 +208,6 @@ def handle_message(data):
 
 
 if __name__ == "__main__":
+    # allow_unsafe_werkzeug 必须为 True：在 Docker 容器中 Werkzeug 就是预期运行时
     socketio.run(app, host="0.0.0.0", port=CHAT_PORT,
-                 debug=CHAT_DEBUG, allow_unsafe_werkzeug=CHAT_DEBUG)
+                 debug=CHAT_DEBUG, allow_unsafe_werkzeug=True)

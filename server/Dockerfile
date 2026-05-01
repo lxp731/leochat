@@ -14,8 +14,10 @@ FROM python:3.14.4-slim
 WORKDIR /app
 
 COPY --from=builder /app/.venv/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
-
-COPY --from=builder /app /app
+COPY --from=builder /app/app.py /app/
+COPY --from=builder /app/templates /app/templates
+COPY --from=builder /app/static /app/static
+COPY --from=builder /app/.env /app/
 
 EXPOSE 5000
 
