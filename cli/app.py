@@ -7,18 +7,18 @@ Leochat CLI — prompt_toolkit TUI
         [ 󰞷 username ❯ 输入框 ]
 """
 import os
+import math
 import threading
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Tuple, cast
 
 import socketio
 from prompt_toolkit import Application
-from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, ScrollablePane
+from prompt_toolkit.layout import Layout, HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.data_structures import Point
 from prompt_toolkit.application.current import get_app
 from wcwidth import wcswidth
 
@@ -99,8 +99,6 @@ class ChatClient:
         self._input_buffer: Buffer | None = None
         
         self._prompt_str = f"󰞷 {self.username} ❯ "
-        self._max_user_w = 0
-        self._rendered_lines = 1  # 缓存最后一次渲染的行数，防止索引越界
         
         self._register_events()
 
@@ -187,8 +185,28 @@ class ChatClient:
         ]
 
     def _messages_lines(self) -> List[Frag]:
+        """生成消息区的格式化文本。
+        
+        只渲染消息列表中最后 N 条消息，N 由终端可用行数决定。
+        这样新消息始终出现在底部，旧消息自然被顶出视口。
+        完全避免 ScrollablePane 的游标滚动问题。
+        """
         with self._lock:
             msgs = list(self._messages)
+
+        # ── 获取终端尺寸，计算消息区可用行数 ──
+        # 6 行保留区: header(4) + divider(1) + input(1)
+        try:
+            app = cast(Application, get_app())
+            term_w = app.output.get_size().columns
+            term_h = app.output.get_size().rows
+        except:
+            term_w = 80
+            term_h = 30
+        msg_area_h = max(term_h - 6, 5)
+
+        if not msgs:
+            return [("class:msg.time", "没有消息...\n")]
 
         # ── 第一遍：计算聊天消息中"󰙯 用户名"的最大显示宽度 ──
         max_user_w = 0
@@ -199,9 +217,11 @@ class ChatClient:
                 if w > max_user_w:
                     max_user_w = w
 
-        # ── 第二遍：格式化每条消息 ──
-        result: List[Frag] = []
+        # ── 第二遍：格式化每条消息为片段，并估算其占用的显示行数 ──
+        # row = (display_lines, fragments_for_this_row)
+        rows: List[Tuple[int, List[Frag]]] = []
         for m in msgs:
+            fragments: List[Frag] = []
             t = m["type"]
             if t == "chat":
                 ts = m["time"]
@@ -210,29 +230,43 @@ class ChatClient:
                 user_block = f"󰙯 {label}"
                 pad_n = max_user_w - _display_w(user_block)
 
-                result.append(("class:msg.time", f"󱑎 {ts}  "))
-                result.append((f"class:{style}", user_block))
+                fragments.append(("class:msg.time", f"󱑎 {ts}  "))
+                fragments.append((f"class:{style}", user_block))
                 if pad_n > 0:
-                    result.append(("class:msg.pad", " " * pad_n))
-                result.append(("class:msg.pad", " "))
-                result.append(("class:msg.text", f"󰭹 {m['text']}"))
+                    fragments.append(("class:msg.pad", " " * pad_n))
+                fragments.append(("class:msg.pad", " "))
+                fragments.append(("class:msg.text", f"󰭹 {m['text']}"))
             elif t == "system":
-                result.append(("class:msg.system", m["text"]))
+                fragments.append(("class:msg.system", m["text"]))
             elif t == "info":
-                result.append(("class:msg.info", m["text"]))
+                fragments.append(("class:msg.info", m["text"]))
             elif t == "error":
-                result.append(("class:msg.error", m["text"]))
+                fragments.append(("class:msg.error", m["text"]))
+
+            # 估算消息占用显示行数（考虑 CJK 宽度和终端换行）
+            row_text = "".join(text for _, text in fragments)
+            row_dw = max(_display_w(row_text), 1)
+            dl = math.ceil(row_dw / max(term_w, 1))
+            rows.append((dl, fragments))
+
+        # ── 第三遍：从后向前选择消息，直到填满可见区域 ──
+        selected: List[List[Frag]] = []
+        remaining = msg_area_h
+        for dl, fragments in reversed(rows):
+            if remaining <= 0:
+                break
+            selected.append(fragments)
+            remaining -= dl
+        selected.reverse()
+
+        # ── 组装最终输出的格式化文本 ──
+        result: List[Frag] = []
+        for fragments in selected:
+            for frag in fragments:
+                result.append(frag)
             result.append(("", "\n"))
-        
-        # 为了美观，如果没有消息则显示占位符
-        if not result:
-            result.append(("class:msg.time", "没有消息...\n"))
-            
-        # ── 第三遍：精确计算真实的换行符数量，保证光标定位不越界 ──
-        newline_count = sum(text.count('\n') for _, text in result)
-        self._target_y = newline_count
-        
-        return result
+
+        return result if result else [("class:msg.time", "没有消息...\n")]
 
     def _prompt_lines(self) -> List[Frag]:
         return [("class:input.prompt", self._prompt_str)]
@@ -268,11 +302,6 @@ class ChatClient:
         
         self._input_buffer.text = ""
 
-    def _msg_cursor_pos(self) -> Point | None:
-        # 直接使用刚才渲染时计算出的最准确的行索引
-        y = getattr(self, '_target_y', 0)
-        return Point(x=0, y=y)
-
     def build_app(self) -> Application:
         kb = KeyBindings()
         @kb.add("enter")
@@ -287,15 +316,10 @@ class ChatClient:
 
         header = Window(content=FormattedTextControl(self._header_lines), height=4, dont_extend_height=True)
         
-        messages = ScrollablePane(
-            content=Window(
-                content=FormattedTextControl(
-                    self._messages_lines,
-                    get_cursor_position=self._msg_cursor_pos,
-                ),
-                wrap_lines=True,
-                always_hide_cursor=True,
-            )
+        messages = Window(
+            content=FormattedTextControl(self._messages_lines),
+            wrap_lines=True,
+            always_hide_cursor=True,
         )
 
         divider = Window(height=1, char="─", style="class:separator", dont_extend_height=True)

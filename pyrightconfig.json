@@ -1,0 +1,14 @@
+{
+  "executionEnvironments": [
+    {
+      "root": "cli",
+      "venvPath": "cli",
+      "venv": ".venv"
+    },
+    {
+      "root": "server",
+      "venvPath": "server",
+      "venv": ".venv"
+    }
+  ]
+}

@@ -34,7 +34,7 @@ DB_PATH = os.environ.get("DB_PATH", "leochat.db")
 MAX_MSG_LEN = 2000
 MAX_NAME_LEN = 20
 RATE_WINDOW = 2          # 速率限制窗口 (秒)
-RATE_MAX = 5             # 窗口内最大消息数
+RATE_MAX = 10            # 窗口内最大消息数 (调大以优化体验)
 
 CST = timezone(timedelta(hours=8))
 
@@ -98,12 +98,13 @@ _user_to_sids: dict[str, set[str]] = defaultdict(set)
 
 
 def _now_str() -> str:
-    return datetime.now(CST).strftime("%H:%M")
+    return datetime.now(CST).strftime("%H:%M:%S")
 
 
 def _broadcast_userlist() -> None:
     users = list(dict.fromkeys(_sid_to_user.values()))
-    emit("userlist", {"users": users}, broadcast=True)
+    # 使用 socketio.emit 确保全局广播的确定性
+    socketio.emit("userlist", {"users": users})
 
 
 def _check_rate(ip_or_sid: str) -> bool:
@@ -135,10 +136,10 @@ def handle_disconnect():
         _user_to_sids[username].discard(sid)
         if not _user_to_sids[username]:
             del _user_to_sids[username]
-            emit("system", {"text": f"{username} has left the chat."}, broadcast=True)
+            socketio.emit("system", {"text": f"{username} has left the chat."})
         _broadcast_userlist()
     
-    # 清理限流相关的内存占用 (类型收窄以消除 Pylance 警告)
+    # 清理限流相关的内存占用
     if addr := request.remote_addr:
         _client_timestamps.pop(addr, None)
     if sid:
@@ -169,7 +170,7 @@ def handle_join(data):
 
     if username != old_name:
         save_user(username)
-        emit("system", {"text": f"{username} has joined the chat."}, broadcast=True)
+        socketio.emit("system", {"text": f"{username} has joined the chat."})
         
         # 推送历史消息给新加入的用户
         history = get_history()
@@ -186,12 +187,9 @@ def handle_message(data):
         return
 
     sid = getattr(request, 'sid')
-    # 优先使用真实 IP 进行限速，防止通过重连（更换 SID）绕过限流
     rate_key = request.remote_addr or sid
     user = _sid_to_user.get(sid, "Anonymous")
     text = str(data.get("text", ""))[:MAX_MSG_LEN]
-    
-    # 消息时间戳统一由服务端生成，防止伪造 (提前修复 P1 建议)
     ts = _now_str()
 
     if not text.strip():
@@ -205,11 +203,10 @@ def handle_message(data):
     save_message(user, text, ts)
 
     print(f"[MSG] {user}: {text[:80]}{'…' if len(text) > 80 else ''}")
-    emit("message", {"user": user, "text": text, "time": ts},
-         broadcast=True, include_self=True)
+    # 真正的全局广播
+    socketio.emit("message", {"user": user, "text": text, "time": ts})
 
 
 if __name__ == "__main__":
-    # 仅在调试模式下允许 unsafe_werkzeug
     socketio.run(app, host="0.0.0.0", port=CHAT_PORT,
                  debug=CHAT_DEBUG, allow_unsafe_werkzeug=CHAT_DEBUG)
