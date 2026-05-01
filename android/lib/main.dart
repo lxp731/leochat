@@ -2,13 +2,23 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
-import 'dart:math' as math;
+import 'package:shared_preferences/shared_preferences.dart';
 
-const String serverIp = String.fromEnvironment('SERVER_IP', defaultValue: '192.168.1.45');
-const String serverPort = String.fromEnvironment('SERVER_PORT', defaultValue: '5000');
-const String kServerUrl = 'http://$serverIp:$serverPort';
+// 默认值从环境变量读取
+const String defaultIp = String.fromEnvironment('SERVER_IP', defaultValue: '192.168.1.45');
+const String defaultPort = String.fromEnvironment('SERVER_PORT', defaultValue: '5000');
+String kServerUrl = 'http://$defaultIp:$defaultPort';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // 加载保存的服务器地址
+  final prefs = await SharedPreferences.getInstance();
+  final savedUrl = prefs.getString('server_url');
+  if (savedUrl != null && savedUrl.isNotEmpty) {
+    kServerUrl = savedUrl;
+  }
+
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.dark,
@@ -50,6 +60,62 @@ class UsernameScreen extends StatefulWidget {
 class _UsernameScreenState extends State<UsernameScreen> {
   final TextEditingController _controller = TextEditingController();
 
+  void _showSettings() {
+    final uri = Uri.tryParse(kServerUrl) ?? Uri.parse('http://192.168.1.45:5000');
+    final ipController = TextEditingController(text: uri.host);
+    final portController = TextEditingController(text: uri.port == 0 ? '5000' : uri.port.toString());
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Server Settings'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: ipController,
+              decoration: const InputDecoration(
+                labelText: 'Server IP',
+                hintText: '192.168.1.45',
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: portController,
+              decoration: const InputDecoration(
+                labelText: 'Server Port',
+                hintText: '5000',
+              ),
+              keyboardType: TextInputType.number,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final ip = ipController.text.trim();
+              final port = portController.text.trim();
+              if (ip.isNotEmpty && port.isNotEmpty) {
+                final newUrl = 'http://$ip:$port';
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('server_url', newUrl);
+                setState(() {
+                  kServerUrl = newUrl;
+                });
+                if (context.mounted) Navigator.pop(context);
+              }
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -72,6 +138,15 @@ class _UsernameScreenState extends State<UsernameScreen> {
             top: -50,
             right: -50,
             child: CircleAvatar(radius: 100, backgroundColor: Colors.white.withOpacity(0.3)),
+          ),
+          // 设置按钮
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 10,
+            right: 10,
+            child: IconButton(
+              icon: const Icon(Icons.settings, color: Color(0xFF6366F1)),
+              onPressed: _showSettings,
+            ),
           ),
           Center(
             child: SingleChildScrollView(
@@ -104,7 +179,12 @@ class _UsernameScreenState extends State<UsernameScreen> {
                     'Connect with the world',
                     style: TextStyle(fontSize: 16, color: Color(0xFF64748B)),
                   ),
-                  const SizedBox(height: 48),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Server: $kServerUrl',
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                  const SizedBox(height: 36),
                   // 输入框
                   Container(
                     decoration: BoxDecoration(
@@ -177,27 +257,43 @@ class _ChatScreenState extends State<ChatScreen> {
     _connect();
   }
 
-  void _connect() { print("Attempting to connect to: $kServerUrl");
+  void _connect() {
+    debugPrint("Attempting to connect to: $kServerUrl");
     _socket = IO.io(kServerUrl, {
       'transports': ['websocket'],
       'autoConnect': false,
     });
 
-    _socket.onConnect((_) => setState(() => _connected = true));
+    _socket.onConnect((_) {
+      if (mounted) setState(() => _connected = true);
+      _socket.emit('join', {'user': widget.username});
+    });
     
-    _socket.onConnectError((data) => print('Connect Error: $data'));
-    _socket.onConnectTimeout((data) => print('Connect Timeout: $data'));
-    _socket.onError((data) => print('Socket Error: $data'));
+    _socket.onConnectError((data) => debugPrint('Connect Error: $data'));
+    _socket.onConnectTimeout((data) => debugPrint('Connect Timeout: $data'));
+    _socket.onError((data) => debugPrint('Socket Error: $data'));
+    _socket.onDisconnect((_) {
+      if (mounted) setState(() => _connected = false);
+    });
 
-    
     _socket.on('message', (data) {
-      if (data is Map) {
-        setState(() => _messages.add(Map<String, dynamic>.from(data)));
+      if (data is Map && mounted) {
+        setState(() {
+          // 简单去重，防止重连时收到重复的历史记录
+          final isDuplicate = _messages.any((m) => 
+            m['user'] == data['user'] && 
+            m['text'] == data['text'] && 
+            m['time'] == data['time']
+          );
+          if (!isDuplicate) {
+            _messages.add(Map<String, dynamic>.from(data));
+          }
+        });
         _scrollToBottom();
       }
     });
     _socket.on('system', (data) {
-      if (data is Map) {
+      if (data is Map && mounted) {
         setState(() => _messages.add({'user': 'System', 'text': data['text'], 'isSystem': true}));
         _scrollToBottom();
       }
@@ -208,7 +304,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _sendMessage() {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty) return;
-    _socket.emit('send_message', {'user': widget.username, 'text': text});
+    _socket.emit('send_message', {'text': text}); // 服务端现在会自动识别 SID 对应的用户
     _msgCtrl.clear();
   }
 
@@ -218,6 +314,14 @@ class _ChatScreenState extends State<ChatScreen> {
         _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    _socket.dispose();
+    _msgCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
   }
 
   @override
@@ -292,6 +396,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: TextField(
                 controller: _msgCtrl,
                 decoration: const InputDecoration(hintText: 'Type message...', border: InputBorder.none),
+                onSubmitted: (_) => _sendMessage(),
               ),
             ),
           ),
@@ -336,7 +441,7 @@ class _MessageBubble extends StatelessWidget {
                 if (!isMe)
                   Padding(
                     padding: const EdgeInsets.only(left: 4, bottom: 4),
-                    child: Text(message['user'], style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54)),
+                    child: Text(message['user'] ?? 'Unknown', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54)),
                   ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -354,7 +459,7 @@ class _MessageBubble extends StatelessWidget {
                     ],
                   ),
                   child: Text(
-                    message['text'],
+                    message['text'] ?? '',
                     style: TextStyle(color: isMe ? Colors.white : const Color(0xFF1E293B), fontSize: 16),
                   ),
                 ),
@@ -367,7 +472,7 @@ class _MessageBubble extends StatelessWidget {
   }
 
   Widget _buildAvatar() {
-    final name = message['user'] as String;
+    final name = (message['user'] as String?) ?? 'A';
     return CircleAvatar(
       radius: 18,
       backgroundColor: Color((name.hashCode * 0xFFFFFF).toInt()).withOpacity(1.0).withBlue(200),
