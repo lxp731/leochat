@@ -6,3 +6,4 @@ nuitka-crash-report.xml
 .vscode/
 .env
 *.db
+__pycache__/

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leochat — 管理登录</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #1a1b2e;
+            --card: rgba(26, 27, 46, 0.9);
+            --text: #d4d4e6;
+            --text-dim: #7c7d9c;
+            --accent: #5b6af0;
+            --accent-hover: #4a5adb;
+            --border: rgba(255, 255, 255, 0.08);
+            --input-bg: rgba(37, 38, 64, 0.8);
+            --danger: #e74c5e;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: linear-gradient(135deg, #1a1b2e 0%, #161625 100%);
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100dvh;
+        }
+        .login-box {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 48px 40px;
+            width: 100%;
+            max-width: 400px;
+            text-align: center;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+        .login-box h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+        .login-box p {
+            color: var(--text-dim);
+            font-size: 14px;
+            margin-bottom: 28px;
+        }
+        .error {
+            background: rgba(231, 76, 94, 0.12);
+            border: 1px solid rgba(231, 76, 94, 0.3);
+            color: var(--danger);
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        input {
+            width: 100%;
+            padding: 14px 18px;
+            background: var(--input-bg);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text);
+            font-size: 15px;
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        input:focus {
+            border-color: var(--accent);
+        }
+        button {
+            width: 100%;
+            margin-top: 16px;
+            padding: 14px;
+            background: var(--accent);
+            border: none;
+            border-radius: 10px;
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover { background: var(--accent-hover); }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <h1>🔒 Leochat</h1>
+        <p>管理后台 — 请输入密码</p>
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        <form method="POST">
+            <input type="password" name="password" placeholder="密码" autofocus autocomplete="off">
+            <button type="submit">进入</button>
+        </form>
+    </div>
+</body>
+</html>

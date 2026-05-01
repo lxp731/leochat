@@ -8,6 +8,8 @@ services:
     environment:
       - CHAT_PORT=5000
       - CHAT_DEBUG=false
+      # WEB_PASSWORD: web 管理后台密码，不设置则自动生成随机密码（见容器日志）
+      - WEB_PASSWORD=admin123
       # SECRET_KEY: 生产环境应设为固定值，否则容器重启后旧 session 失效
       # - SECRET_KEY=your-secret-key-here
       - DB_PATH=/data/leochat.db

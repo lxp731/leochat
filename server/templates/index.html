@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Leochat | 实时在线聊天室</title>
+    <title>Leochat | 管理后台</title>
     <!-- Google Fonts: Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -26,9 +26,14 @@
 
     <main class="main">
         <header class="chat-header">
-            <h3>💬 公共大厅</h3>
+            <h3>🛡️ 管理后台</h3>
             <span class="conn-status" id="connStatus">🔴 未连接</span>
         </header>
+
+        <div class="broadcast-bar" id="broadcastBar">
+            <input type="text" id="broadcast" placeholder="📢 系统公告..." maxlength="500">
+            <button id="broadcastBtn" title="发送系统公告">发送</button>
+        </div>
         
         <div class="messages" id="messages">
             <!-- Messages will appear here -->

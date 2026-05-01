@@ -153,7 +153,12 @@ class ChatClient:
         @sio.on("userlist")
         def on_userlist(data):
             if isinstance(data, dict):
-                self._users = list(data.get("users", []))
+                users = data.get("users", [])
+                # 兼容新旧格式：新格式 [{"name": ...}], 旧格式 ["name", ...]
+                if users and isinstance(users[0], dict):
+                    self._users = [u.get("name", "?") for u in users]
+                else:
+                    self._users = list(users)
 
     # ── UI 组件 ───────────────────────────────────────
 
