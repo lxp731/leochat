@@ -129,6 +129,10 @@ docker compose up -d
 
 ![cli](cli/assets/result.png)
 
+### 移动客户端 (Android)
+
+![android](android/assets/result.png)
+
 ## License
 
 [Apache](LICENSE)
