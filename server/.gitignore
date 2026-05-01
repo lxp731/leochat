@@ -4,3 +4,5 @@
 *.dist/
 nuitka-crash-report.xml
 .vscode/
+.env
+*.db
