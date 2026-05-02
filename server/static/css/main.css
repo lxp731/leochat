@@ -317,10 +317,16 @@ body {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
+  position: relative;
 }
 
 .msg-row-me .msg-bubble-wrap {
   align-items: flex-end;
+}
+
+.msg-row-me .msg-delete {
+  right: auto;
+  left: -42px;
 }
 
 .msg-bubble {
@@ -567,7 +573,7 @@ body {
   display: none;
   position: absolute;
   top: 6px;
-  right: -20px;
+  right: -42px;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -582,9 +588,7 @@ body {
   flex-shrink: 0;
 }
 
-.msg-row {
-  position: relative;
-}
+
 
 .msg-row:hover .msg-delete,
 .msg-row:focus-within .msg-delete {

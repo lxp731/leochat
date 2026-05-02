@@ -124,7 +124,7 @@ function appendMsg(msgId, user, text, cls, time) {
 
   row.appendChild(aw);
   row.appendChild(bw);
-  row.appendChild(del);
+  bw.appendChild(del);
   elements.messages.appendChild(row);
   maybeScroll();
 }
@@ -291,6 +291,13 @@ elements.scrollBtn.addEventListener('click', () => {
 elements.messages.addEventListener('scroll', maybeScroll);
 
 elements.usernameInput.value = localStorage.getItem('chatroom_admin_name') || '';
+const savedName = elements.usernameInput.value.trim();
+if (savedName) {
+  me.name = savedName;
+  if (connected) {
+    socket.emit('join', { user: savedName });
+  }
+}
 elements.usernameInput.addEventListener('change', () => {
   const name = elements.usernameInput.value.trim();
   localStorage.setItem('chatroom_admin_name', name);
