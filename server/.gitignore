@@ -7,3 +7,4 @@ nuitka-crash-report.xml
 .env
 *.db
 __pycache__/
+data/

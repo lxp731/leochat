@@ -276,6 +276,17 @@ body {
 .msg-row-me {
   align-self: flex-end;
   flex-direction: row-reverse;
+  position: relative;
+}
+
+/* 为右侧消息扩展左侧悬停区域，覆盖删除按钮 */
+.msg-row-me::before {
+  content: '';
+  position: absolute;
+  left: -50px;
+  top: 0;
+  height: 100%;
+  width: 50px;
 }
 
 /* Avatar Group */
@@ -570,10 +581,14 @@ body {
 
 /* 消息删除按钮 */
 .msg-delete {
-  display: none;
+  opacity: 0;
+  pointer-events: none;
   position: absolute;
   top: 6px;
   right: -42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -584,17 +599,15 @@ body {
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, opacity 0.15s;
   flex-shrink: 0;
 }
 
-
-
 .msg-row:hover .msg-delete,
-.msg-row:focus-within .msg-delete {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.msg-row:focus-within .msg-delete,
+.msg-delete:hover {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .msg-delete:hover {
