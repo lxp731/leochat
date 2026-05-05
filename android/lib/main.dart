@@ -654,6 +654,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
               decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(25)),
               child: TextField(
                 controller: _msgCtrl,
+                minLines: 1,
+                maxLines: 5,
+                textInputAction: TextInputAction.newline,
                 decoration: const InputDecoration(hintText: 'Type message...', border: InputBorder.none),
                 onSubmitted: (_) => _sendMessage(),
               ),
