@@ -501,7 +501,7 @@ class _MessageBubble extends StatelessWidget {
     if (avatarUrl.isNotEmpty) {
       return ClipOval(
         child: Image.network(
-          '$kServerUrl/avatar/$avatarUrl',
+          '$kServerUrl/static/avatars/$avatarUrl',
           width: 36,
           height: 36,
           fit: BoxFit.cover,

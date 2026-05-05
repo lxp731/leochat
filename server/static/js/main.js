@@ -102,7 +102,7 @@ function appendMsg(msgId, user, text, cls, time) {
   const avatarFile = userData?.avatar || '';
   if (avatarFile) {
     const img = document.createElement('img');
-    img.src = `/avatar/${avatarFile}`;
+    img.src = `/static/avatars/${avatarFile}`;
     img.alt = init(user);
     av.appendChild(img);
   } else {

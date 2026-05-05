@@ -10,7 +10,7 @@ import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
-from flask import Flask, render_template, request, session, redirect, url_for, send_from_directory
+from flask import Flask, render_template, request, session, redirect, url_for
 from flask_socketio import SocketIO, emit
 
 # ── 环境变量加载 ──────────────────────────────────────────
@@ -46,7 +46,7 @@ RATE_MAX = 10            # 窗口内最大消息数 (调大以优化体验)
 
 CST = timezone(timedelta(hours=8))
 
-AVATAR_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets', 'profile_pictures')
+AVATAR_DIR = os.path.join(os.path.dirname(__file__), 'static', 'avatars')
 AVATAR_FILES = [f for f in os.listdir(AVATAR_DIR) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))]
 
 app = Flask(__name__)
@@ -171,8 +171,8 @@ def _check_auth():
     # Socket.IO 端点由其事件处理器单独校验
     if request.path.startswith("/socket.io"):
         return None
-    # 允许静态资源、头像、登录页
-    if request.path.startswith("/static/") or request.path.startswith("/avatar/") or request.path == "/login":
+    # 允许静态资源、登录页
+    if request.path.startswith("/static/") or request.path == "/login":
         return None
     # 需要认证
     if WEB_PASSWORD and not session.get("authenticated"):
@@ -194,11 +194,6 @@ def login():
             return redirect(url_for("index"))
         error = "密码错误"
     return render_template("login.html", error=error)
-
-
-@app.route("/avatar/<filename>")
-def avatar(filename):
-    return send_from_directory(AVATAR_DIR, filename)
 
 
 # ── 连接 / 断线 ───────────────────────────────────────────
