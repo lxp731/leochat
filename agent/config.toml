@@ -1,6 +1,6 @@
 [server]
 # Docker 部署时使用 compose 服务名；本地运行改为 127.0.0.1
-host = "127.0.0.1"
+host = "server"
 port = 5000
 
 [agent]

@@ -2,6 +2,8 @@ FROM python:3.14.4-slim AS builder
 
 WORKDIR /app
 
+ENV PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
 COPY pyproject.toml uv.lock ./
 
 RUN pip install uv && \
