@@ -251,18 +251,43 @@ class ChatClient:
             ("class:header.box", "╰" + "─" * box_w + "╯"),
         ]
 
+    def _format_one(self, m: Dict[str, Any], max_user_w: int) -> Tuple[int, List[Frag]]:
+        """格式化单条消息，返回 (占用行数, 片段列表)"""
+        fragments: List[Frag] = []
+        t = m["type"]
+        if t == "chat":
+            ts = m["time"]
+            label = "你" if m.get("self") else m["user"]
+            style = "msg.self" if m.get("self") else "msg.other"
+            emoji = "👤" if m.get("self") else self._user_avatars.get(m["user"], "👤")
+            user_block = f"{emoji} {label}"
+            pad_n = max_user_w - _display_w(user_block)
+            text = m["text"]
+            if m.get("revoked"):
+                text = f"〈{text}〉"
+
+            fragments.append(("class:msg.time", f"󱑎 {ts}  "))
+            fragments.append((f"class:{style}", user_block))
+            if pad_n > 0:
+                fragments.append(("class:msg.pad", " " * pad_n))
+            fragments.append(("class:msg.pad", " "))
+            fragments.append(("class:msg.text", f"󰭹 {text}"))
+        elif t == "system":
+            fragments.append(("class:msg.system", m["text"]))
+        elif t == "info":
+            fragments.append(("class:msg.info", m["text"]))
+        elif t == "error":
+            fragments.append(("class:msg.error", m["text"]))
+
+        row_text = "".join(text for _, text in fragments)
+        row_dw = max(_display_w(row_text), 1)
+        return row_dw, fragments
+
     def _messages_lines(self) -> List[Frag]:
-        """生成消息区的格式化文本。
-        
-        只渲染消息列表中最后 N 条消息，N 由终端可用行数决定。
-        这样新消息始终出现在底部，旧消息自然被顶出视口。
-        完全避免 ScrollablePane 的游标滚动问题。
-        """
+        """虚拟滚动：只格式化和渲染可见区域内的消息。"""
         with self._lock:
             msgs = list(self._messages)
 
-        # ── 获取终端尺寸，计算消息区可用行数 ──
-        # 6 行保留区: header(4) + divider(1) + input(1)
         try:
             app = cast(Application, get_app())
             term_w = app.output.get_size().columns
@@ -275,66 +300,41 @@ class ChatClient:
         if not msgs:
             return [("class:msg.time", "没有消息...\n")]
 
-        # ── 第一遍：计算聊天消息中"emoji 用户名"的最大显示宽度 ──
-        max_user_w = 0
-        for m in msgs:
-            if m["type"] == "chat":
-                label = "你" if m.get("self") else m["user"]
-                emoji = "👤" if m.get("self") else self._user_avatars.get(m["user"], "👤")
-                w = _display_w(f"{emoji} {label}")
-                if w > max_user_w:
-                    max_user_w = w
-
-        # ── 第二遍：格式化每条消息为片段，并估算其占用的显示行数 ──
-        # row = (display_lines, fragments_for_this_row)
-        rows: List[Tuple[int, List[Frag]]] = []
-        for m in msgs:
-            fragments: List[Frag] = []
-            t = m["type"]
-            if t == "chat":
-                ts = m["time"]
-                label = "你" if m.get("self") else m["user"]
-                style = "msg.self" if m.get("self") else "msg.other"
-                emoji = "👤" if m.get("self") else self._user_avatars.get(m["user"], "👤")
-                user_block = f"{emoji} {label}"
-                pad_n = max_user_w - _display_w(user_block)
-                text = m["text"]
-                if m.get("revoked"):
-                    text = f"〈{text}〉"
-
-                fragments.append(("class:msg.time", f"󱑎 {ts}  "))
-                fragments.append((f"class:{style}", user_block))
-                if pad_n > 0:
-                    fragments.append(("class:msg.pad", " " * pad_n))
-                fragments.append(("class:msg.pad", " "))
-                fragments.append(("class:msg.text", f"󰭹 {text}"))
-            elif t == "system":
-                fragments.append(("class:msg.system", m["text"]))
-            elif t == "info":
-                fragments.append(("class:msg.info", m["text"]))
-            elif t == "error":
-                fragments.append(("class:msg.error", m["text"]))
-
-            # 估算消息占用显示行数（考虑 CJK 宽度和终端换行）
-            row_text = "".join(text for _, text in fragments)
-            row_dw = max(_display_w(row_text), 1)
-            dl = math.ceil(row_dw / max(term_w, 1))
-            rows.append((dl, fragments))
-
-        # ── 第三遍：从后向前选择消息，直到填满可见区域 ──
-        selected: List[List[Frag]] = []
+        # ── 从后向前收集消息，直到填满可见区域 ──
+        # 同时记录需要对齐的聊天消息，用于后续计算最大用户名宽度
+        raw_rows: List[Tuple[Dict[str, Any], int, List[Frag]]] = []
+        chat_indices: List[int] = []  # raw_rows 中 chat 类型消息的索引
         remaining = msg_area_h
-        for dl, fragments in reversed(rows):
-            if remaining <= 0:
-                break
-            selected.append(fragments)
+        idx = len(msgs) - 1
+        while idx >= 0 and remaining > 0:
+            m = msgs[idx]
+            # 先用 0 占位宽度粗略估算行数（非 chat 类型不需要对齐）
+            dw, frags = self._format_one(m, 0)
+            dl = math.ceil(dw / max(term_w, 1))
+            raw_rows.append((m, dl, frags))
+            if m["type"] == "chat":
+                chat_indices.append(len(raw_rows) - 1)
             remaining -= dl
-        selected.reverse()
+            idx -= 1
+        raw_rows.reverse()
+        chat_indices.reverse()
 
-        # ── 组装最终输出的格式化文本 ──
+        # ── 仅对可见的 chat 消息计算最大用户名宽度 ──
+        max_user_w = 0
+        for ci in chat_indices:
+            m = raw_rows[ci][0]
+            label = "你" if m.get("self") else m["user"]
+            emoji = "👤" if m.get("self") else self._user_avatars.get(m["user"], "👤")
+            w = _display_w(f"{emoji} {label}")
+            if w > max_user_w:
+                max_user_w = w
+
+        # ── 用正确的 max_user_w 重新格式化所有已选消息 ──
         result: List[Frag] = []
-        for fragments in selected:
-            for frag in fragments:
+        for m, _, _ in raw_rows:
+            _, frags = self._format_one(m, max_user_w)
+            dl = math.ceil(_display_w("".join(text for _, text in frags)) / max(term_w, 1))
+            for frag in frags:
                 result.append(frag)
             result.append(("", "\n"))
 

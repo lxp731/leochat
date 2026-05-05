@@ -121,7 +121,7 @@
 - [x] **Web 端侧边栏头像 URL 修复** — `/avatar/` → `/static/avatars/`
 - [x] **Android 端消息删除同步** — 监听 `message_deleted` 事件实时移除
 - [x] **Android 端错误提示** — 监听 `error` 事件弹出 SnackBar
-- [ ] **CLI 消息区虚拟滚动** — 长时间聊天（上千条）需行级虚拟化
+- [x] **CLI 消息区虚拟滚动** — 只格式化和渲染可见区域消息，O(屏幕行数) 替代 O(全部消息)
 
 ### 🟢 P2 — 安全加固与优化
 

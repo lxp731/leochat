@@ -114,7 +114,10 @@ def init_db():
                 value TEXT NOT NULL DEFAULT ''
             )
         """)
-        for k, v in [('room_name', 'Leochat'), ('welcome_msg', ''), ('max_msg_len', '2000')]:
+        for k, v in [
+            ('room_name', 'Leochat'), ('welcome_msg', ''), ('max_msg_len', '2000'),
+            ('max_history', '5000'), ('history_limit', '50'),
+        ]:
             conn.execute("INSERT OR IGNORE INTO room_config (key, value) VALUES (?, ?)", (k, v))
         conn.commit()
 
@@ -145,6 +148,20 @@ def get_user_avatar(username: str) -> str:
         ).fetchone()
     return (row[0] if row and row[0] else "")
 
+def _cleanup_old_messages(max_history: int) -> int:
+    """清理超出上限的最旧消息，返回删除条数"""
+    with sqlite3.connect(DB_PATH) as conn:
+        total = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        excess = total - max_history
+        if excess > 0:
+            conn.execute(
+                "DELETE FROM messages WHERE id IN (SELECT id FROM messages ORDER BY id ASC LIMIT ?)",
+                (excess,)
+            )
+            conn.commit()
+        return max(excess, 0)
+
+
 def save_message(user, text, time_str) -> int:
     with sqlite3.connect(DB_PATH) as conn:
         cursor = conn.execute(
@@ -152,7 +169,14 @@ def save_message(user, text, time_str) -> int:
             (user, text, time_str)
         )
         conn.commit()
-        return cursor.lastrowid
+        msg_id = cursor.lastrowid
+    # 写入后检查是否需要清理
+    config = _get_room_config()
+    max_history = int(config.get('max_history', '5000'))
+    deleted = _cleanup_old_messages(max_history)
+    if deleted:
+        print(f"[DB] 清理了 {deleted} 条旧消息（上限 {max_history}）")
+    return msg_id
 
 
 def delete_message(msg_id: int) -> None:
@@ -169,6 +193,11 @@ def get_history(limit=50):
         )
         rows = cursor.fetchall()
         return [dict(row) for row in reversed(rows)]
+
+
+def _get_history_limit() -> int:
+    config = _get_room_config()
+    return max(10, min(200, int(config.get('history_limit', '50'))))
 
 
 def get_messages_page(limit=50, offset=0, user_filter='', keyword=''):
@@ -589,7 +618,7 @@ def handle_join(data):
             emit("system", {"text": f"👋 {config['welcome_msg']}"}, to=sid)
 
         # 推送历史消息给新加入的用户
-        history = get_history()
+        history = get_history(limit=_get_history_limit())
         for msg in history:
             avatar = _user_avatar.get(msg['user'], '')
             if not avatar:
@@ -884,12 +913,24 @@ def handle_set_room_config(data):
     value = str(data.get('value', '')).strip()
     if not key:
         return
-    allowed = {'room_name', 'welcome_msg', 'max_msg_len'}
+    allowed = {'room_name', 'welcome_msg', 'max_msg_len', 'max_history', 'history_limit'}
     if key not in allowed:
         return
     _set_room_config(key, value)
     print(f"[ADMIN] 配置 {key} = {value[:30]}")
     emit("room_config", _get_room_config())
+
+
+@socketio.on("purge_messages")
+def handle_purge_messages():
+    if not _require_auth() or not _is_admin():
+        return
+    config = _get_room_config()
+    max_history = int(config.get('max_history', '5000'))
+    deleted = _cleanup_old_messages(max_history)
+    print(f"[ADMIN] 手动清理了 {deleted} 条旧消息")
+    emit("system", {"text": f"管理员清理了 {deleted} 条旧消息"}, broadcast=True)
+    emit("stats", get_stats())
 
 
 # ── 聊天导出 ────────────────────────────────────────────────

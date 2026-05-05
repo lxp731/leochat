@@ -51,6 +51,9 @@ const elements = {
   cfgMaxMsgLen: $('cfgMaxMsgLen'),
   cfgSaveBtn: $('cfgSaveBtn'),
   cfgCancelBtn: $('cfgCancelBtn'),
+  cfgMaxHistory: $('cfgMaxHistory'),
+  cfgHistoryLimit: $('cfgHistoryLimit'),
+  cfgPurgeBtn: $('cfgPurgeBtn'),
   // Export
   exportBtn: $('exportBtn'),
 };
@@ -442,6 +445,8 @@ socket.on('room_config', data => {
   elements.cfgRoomName.value = data.room_name || 'Leochat';
   elements.cfgWelcome.value = data.welcome_msg || '';
   elements.cfgMaxMsgLen.value = data.max_msg_len || '2000';
+  elements.cfgMaxHistory.value = data.max_history || '5000';
+  elements.cfgHistoryLimit.value = data.history_limit || '50';
 });
 
 socket.on('export_data', data => {
@@ -633,10 +638,20 @@ elements.cfgSaveBtn.addEventListener('click', () => {
     { key: 'room_name', value: elements.cfgRoomName.value.trim() },
     { key: 'welcome_msg', value: elements.cfgWelcome.value.trim() },
     { key: 'max_msg_len', value: elements.cfgMaxMsgLen.value.trim() || '2000' },
+    { key: 'max_history', value: elements.cfgMaxHistory.value.trim() || '5000' },
+    { key: 'history_limit', value: elements.cfgHistoryLimit.value.trim() || '50' },
   ];
   settings.forEach(s => { if (s.value) socket.emit('set_room_config', s); });
   elements.settingsModal.style.display = 'none';
   showToast('设置已保存');
+});
+
+elements.cfgPurgeBtn.addEventListener('click', () => {
+  if (confirm('确定要立即清理旧消息吗？将保留最近 max_history 条。')) {
+    socket.emit('purge_messages');
+    elements.settingsModal.style.display = 'none';
+    showToast('清理完成');
+  }
 });
 
 // ── 导出 ─────────────────────────────────────────────
