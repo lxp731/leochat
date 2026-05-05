@@ -18,8 +18,22 @@
             <h2><span class="dot" id="statusDot"></span> Leochat</h2>
             <div class="online-count" id="onlineCount">— online</div>
         </div>
+        <div class="stats-panel" id="statsPanel">
+            <div class="stat-card"><span class="stat-val" id="statTodayMsgs">0</span><span class="stat-lbl">今日消息</span></div>
+            <div class="stat-card"><span class="stat-val" id="statTodayVisits">0</span><span class="stat-lbl">今日访客</span></div>
+            <div class="stat-card"><span class="stat-val" id="statTotalMsgs">0</span><span class="stat-lbl">总消息</span></div>
+            <div class="stat-card"><span class="stat-val" id="statTotalUsers">0</span><span class="stat-lbl">总用户</span></div>
+        </div>
         <div class="user-list" id="userList">
             <!-- Online users will appear here -->
+        </div>
+        <div class="sensitive-panel" id="sensitivePanel">
+          <div class="sensitive-header">🛡️ 敏感词</div>
+          <div class="sensitive-input-row">
+            <input type="text" id="sensitiveInput" placeholder="添加敏感词..." maxlength="50">
+            <button id="sensitiveAddBtn" title="添加">+</button>
+          </div>
+          <div class="sensitive-list" id="sensitiveList"></div>
         </div>
         <div class="sidebar-footer" id="sidebarFooter">正在连接...</div>
     </aside>
@@ -27,14 +41,30 @@
     <main class="main">
         <header class="chat-header">
             <h3>🛡️ 管理后台</h3>
-            <span class="conn-status" id="connStatus">🔴 未连接</span>
+            <div style="display:flex;align-items:center;gap:12px">
+              <button class="settings-btn" id="settingsBtn" title="房间设置">⚙️</button>
+              <button class="export-btn" id="exportBtn" title="导出聊天记录">📥</button>
+              <span class="conn-status" id="connStatus">🔴 未连接</span>
+            </div>
         </header>
 
         <div class="broadcast-bar" id="broadcastBar">
             <input type="text" id="broadcast" placeholder="📢 系统公告..." maxlength="500">
             <button id="broadcastBtn" title="发送系统公告">发送</button>
+            <button id="pinAnnBtn" title="设置置顶公告">📌</button>
         </div>
-        
+        <div class="announcement-banner" id="announcementBanner" style="display:none">
+          <span class="ann-content" id="annContent"></span>
+          <button class="ann-clear" id="annClear" title="清除公告">×</button>
+        </div>
+
+        <div class="search-bar" id="searchBar">
+            <input type="text" id="searchKeyword" placeholder="搜索消息关键词...">
+            <input type="text" id="searchUser" placeholder="按用户筛选..." maxlength="20">
+            <button id="searchBtn" title="搜索">🔍</button>
+            <button id="loadMoreBtn" class="btn-load-more" title="加载更多历史消息">加载更多</button>
+        </div>
+
         <div class="messages" id="messages">
             <!-- Messages will appear here -->
         </div>
@@ -50,6 +80,23 @@
 
     <button class="scroll-btn" id="scrollBtn" title="滚到底部">↓</button>
     <div class="toast" id="toast"></div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal" style="display:none">
+      <div class="modal">
+        <h3>⚙️ 房间设置</h3>
+        <label>房间名称</label>
+        <input type="text" id="cfgRoomName" placeholder="Leochat" maxlength="50">
+        <label>欢迎语（新用户进房时显示）</label>
+        <input type="text" id="cfgWelcome" placeholder="欢迎来到聊天室！" maxlength="200">
+        <label>最大消息长度</label>
+        <input type="number" id="cfgMaxMsgLen" placeholder="2000" min="1" max="10000">
+        <div class="modal-actions">
+          <button id="cfgSaveBtn">保存</button>
+          <button id="cfgCancelBtn" class="btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
 
     <!-- Scripts -->
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js" integrity="sha384-2huaZvOR9iDzHqslqwpR87isEmrfxqyWOF7hr7BY6KG0+hVKLoEXMPUJw3ynWuhO" crossorigin="anonymous"></script>

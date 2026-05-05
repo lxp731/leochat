@@ -320,6 +320,18 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     });
+    _socket.on('message_revoked', (data) {
+      if (data is Map && mounted) {
+        setState(() {
+          final idx = _messages.indexWhere((m) => m['id'] == data['id']);
+          if (idx != -1) {
+            _messages[idx] = Map<String, dynamic>.from(_messages[idx])
+              ..['text'] = '管理员撤回了一条消息'
+              ..['revoked'] = true;
+          }
+        });
+      }
+    });
     _socket.on('error', (data) {
       if (data is Map && mounted) {
         setState(() => _errorText = data['text']?.toString() ?? 'Error');
@@ -499,7 +511,11 @@ class _MessageBubble extends StatelessWidget {
       ),
       child: Text(
         message['text'] ?? '',
-        style: TextStyle(color: isMe ? Colors.white : const Color(0xFF1E293B), fontSize: 16),
+        style: TextStyle(
+          color: isMe ? Colors.white : const Color(0xFF1E293B),
+          fontSize: 16,
+          fontStyle: message['revoked'] == true ? FontStyle.italic : FontStyle.normal,
+        ),
       ),
     );
 

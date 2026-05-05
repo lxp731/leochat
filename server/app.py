@@ -65,11 +65,10 @@ def init_db():
                 last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # 迁移：给已有 users 表增加 avatar 列
         try:
             conn.execute("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''")
         except sqlite3.OperationalError:
-            pass  # 列已存在
+            pass
         conn.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,6 +78,44 @@ def init_db():
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        try:
+            conn.execute("ALTER TABLE messages ADD COLUMN revoked INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                target TEXT NOT NULL,
+                type TEXT NOT NULL,
+                expires_at DATETIME,
+                created_by TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sensitive_words (
+                word TEXT PRIMARY KEY,
+                created_by TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS announcement (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                text TEXT NOT NULL DEFAULT '',
+                set_by TEXT DEFAULT '',
+                set_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("INSERT OR IGNORE INTO announcement (id, text) VALUES (1, '')")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS room_config (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        for k, v in [('room_name', 'Leochat'), ('welcome_msg', ''), ('max_msg_len', '2000')]:
+            conn.execute("INSERT OR IGNORE INTO room_config (key, value) VALUES (?, ?)", (k, v))
         conn.commit()
 
 
@@ -127,20 +164,231 @@ def get_history(limit=50):
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.execute(
-            "SELECT id, user, text, time FROM messages ORDER BY id DESC LIMIT ?",
+            "SELECT id, user, text, time, revoked FROM messages ORDER BY id DESC LIMIT ?",
             (limit,)
         )
         rows = cursor.fetchall()
         return [dict(row) for row in reversed(rows)]
 
+
+def get_messages_page(limit=50, offset=0, user_filter='', keyword=''):
+    """分页查询消息，支持按用户名筛选和关键词搜索"""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        conditions = []
+        params: list = []
+        if user_filter:
+            conditions.append("user = ?")
+            params.append(user_filter)
+        if keyword:
+            conditions.append("text LIKE ?")
+            params.append(f'%{keyword}%')
+        where = (' WHERE ' + ' AND '.join(conditions)) if conditions else ''
+        count_sql = f"SELECT COUNT(*) as cnt FROM messages{where}"
+        total = conn.execute(count_sql, params).fetchone()['cnt']
+        data_sql = f"SELECT id, user, text, time, revoked FROM messages{where} ORDER BY id DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        rows = conn.execute(data_sql, params).fetchall()
+        return total, [dict(row) for row in reversed(rows)]
+
+
+def get_stats():
+    """返回今日消息数、今日访客数、历史消息总数"""
+    today = datetime.now(CST).strftime("%Y-%m-%d")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        today_msgs = conn.execute(
+            "SELECT COUNT(*) as cnt FROM messages WHERE time LIKE ?",
+            (f'{today}%',)
+        ).fetchone()['cnt']
+        total_msgs = conn.execute(
+            "SELECT COUNT(*) as cnt FROM messages"
+        ).fetchone()['cnt']
+        total_users = conn.execute(
+            "SELECT COUNT(*) as cnt FROM users"
+        ).fetchone()['cnt']
+        today_visitors = conn.execute(
+            "SELECT COUNT(*) as cnt FROM users WHERE date(last_seen) = ?",
+            (today,)
+        ).fetchone()['cnt']
+    return {
+        'today_msgs': today_msgs,
+        'total_msgs': total_msgs,
+        'total_users': total_users,
+        'today_visitors': today_visitors,
+    }
+
+
+# ── 禁言 / 封禁 ────────────────────────────────────────────
+
+def _is_banned(username: str, ip: str = '') -> tuple[bool, str]:
+    """检查用户或 IP 是否被封禁。返回 (是否被封, 原因)"""
+    now = datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect(DB_PATH) as conn:
+        # 过期封禁自动清理
+        conn.execute("DELETE FROM bans WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,))
+        conn.commit()
+        # 检查永久封禁
+        row = conn.execute(
+            "SELECT target, type FROM bans WHERE (expires_at IS NULL) AND (target = ? OR (target = ? AND type = 'ban_ip')) LIMIT 1",
+            (username, ip)
+        ).fetchone()
+        if row:
+            return True, f'您已被封禁'
+        # 检查临时封禁
+        row = conn.execute(
+            "SELECT target, type, expires_at FROM bans WHERE expires_at IS NOT NULL AND (target = ? OR (target = ? AND type = 'ban_ip')) LIMIT 1",
+            (username, ip)
+        ).fetchone()
+        if row:
+            return True, f'您已被封禁（至 {row[2]}）'
+    return False, ''
+
+
+def _is_muted(username: str) -> tuple[bool, str]:
+    """检查用户是否被禁言。返回 (是否被禁, 原因)"""
+    now = datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM bans WHERE type = 'mute' AND expires_at IS NOT NULL AND expires_at <= ?", (now,))
+        conn.commit()
+        row = conn.execute(
+            "SELECT expires_at FROM bans WHERE type = 'mute' AND target = ? AND (expires_at IS NULL OR expires_at > ?) LIMIT 1",
+            (username, now)
+        ).fetchone()
+    if row:
+        if row[0]:
+            return True, f'您已被禁言（至 {row[0]}）'
+        return True, '您已被永久禁言'
+    return False, ''
+
+
+def _add_ban(target: str, ban_type: str, duration_minutes: int = 0, created_by: str = '') -> None:
+    """添加封禁/禁言记录"""
+    expires = None
+    if duration_minutes > 0:
+        expires = (datetime.now(CST) + timedelta(minutes=duration_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT INTO bans (target, type, expires_at, created_by) VALUES (?, ?, ?, ?)",
+            (target, ban_type, expires, created_by)
+        )
+        conn.commit()
+
+
+def _remove_ban(target: str, ban_type: str = '') -> None:
+    """解除封禁/禁言"""
+    with sqlite3.connect(DB_PATH) as conn:
+        if ban_type:
+            conn.execute("DELETE FROM bans WHERE target = ? AND type = ?", (target, ban_type))
+        else:
+            conn.execute("DELETE FROM bans WHERE target = ?", (target,))
+        conn.commit()
+
+
+def _get_bans() -> list[dict]:
+    """获取所有封禁/禁言记录"""
+    now = datetime.now(CST).strftime("%Y-%m-%d %H:%M:%S")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM bans WHERE type = 'mute' AND expires_at IS NOT NULL AND expires_at <= ?", (now,))
+        conn.commit()
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, target, type, expires_at, created_by, created_at FROM bans ORDER BY created_at DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+# ── 敏感词 ────────────────────────────────────────────────
+
+_SENSITIVE_WORDS: list[str] = []
+
+
+def _load_sensitive_words() -> list[str]:
+    """从数据库加载敏感词到内存缓存"""
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("SELECT word FROM sensitive_words").fetchall()
+    return [r[0] for r in rows]
+
+
+def _add_sensitive_word(word: str, created_by: str = '') -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO sensitive_words (word, created_by) VALUES (?, ?)",
+            (word, created_by)
+        )
+        conn.commit()
+    _SENSITIVE_WORDS.append(word)
+
+
+def _remove_sensitive_word(word: str) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM sensitive_words WHERE word = ?", (word,))
+        conn.commit()
+    if word in _SENSITIVE_WORDS:
+        _SENSITIVE_WORDS.remove(word)
+
+
+def _filter_text(text: str) -> str:
+    """过滤敏感词，替换为 ***"""
+    result = text
+    for w in _SENSITIVE_WORDS:
+        if w and w in result:
+            result = result.replace(w, '***')
+    return result
+
+
+# ── 消息撤回 ────────────────────────────────────────────────
+
+def _revoke_message(msg_id: int) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("UPDATE messages SET revoked = 1 WHERE id = ?", (msg_id,))
+        conn.commit()
+
 # 初始化数据库
 init_db()
+_SENSITIVE_WORDS = _load_sensitive_words()
+
+
+# ── 置顶公告 ────────────────────────────────────────────────
+
+def _get_announcement() -> dict:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT text, set_by, set_at FROM announcement WHERE id = 1").fetchone()
+    return {'text': row['text'] if row else '', 'set_by': row['set_by'] if row else '', 'set_at': row['set_at'] if row else ''}
+
+
+def _set_announcement(text: str, set_by: str = '') -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO announcement (id, text, set_by, set_at) VALUES (1, ?, ?, CURRENT_TIMESTAMP)",
+            (text, set_by)
+        )
+        conn.commit()
+
+
+# ── 房间配置 ────────────────────────────────────────────────
+
+def _get_room_config() -> dict[str, str]:
+    with sqlite3.connect(DB_PATH) as conn:
+        rows = conn.execute("SELECT key, value FROM room_config").fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def _set_room_config(key: str, value: str) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO room_config (key, value) VALUES (?, ?)",
+            (key, value)
+        )
+        conn.commit()
 
 # ── 状态 ──────────────────────────────────────────────────
 _client_timestamps: dict[str, list[float]] = defaultdict(list)
 _sid_to_user: dict[str, str] = {}          # sid → username
 _user_to_sids: dict[str, set[str]] = defaultdict(set)
 _user_avatar: dict[str, str] = {}          # username → avatar filename
+_user_meta: dict[str, dict] = {}           # sid → {ip, connect_time, last_msg_time}
 _admin_sids: set[str] = set()              # web 管理后台的 sid，拥有管理权限
 
 
@@ -160,8 +408,18 @@ def _broadcast_userlist() -> None:
     # 所有人收到用户名列表
     basic = [{"name": u, "avatar": _user_avatar.get(u, "")} for u in dict.fromkeys(_sid_to_user.values())]
     socketio.emit("userlist", {"users": basic})
-    # 管理员额外收到 sid（用于踢人）
-    admin_data = [{"name": u, "sid": s, "avatar": _user_avatar.get(u, "")} for s, u in _sid_to_user.items()]
+    # 管理员额外收到 sid / 元数据（用于踢人 + 用户详情）
+    admin_data = []
+    for s, u in _sid_to_user.items():
+        meta = _user_meta.get(s, {})
+        admin_data.append({
+            "name": u,
+            "sid": s,
+            "avatar": _user_avatar.get(u, ""),
+            "ip": meta.get('ip', ''),
+            "connect_time": meta.get('connect_time', ''),
+            "last_msg_time": meta.get('last_msg_time', ''),
+        })
     for admin_sid in _admin_sids:
         emit("userlist", {"users": admin_data, "admin": True}, to=admin_sid)
 
@@ -229,6 +487,11 @@ def handle_connect(auth=None):
     if not _require_auth():
         return False  # 拒绝未认证的 web 连接
     sid = getattr(request, 'sid')
+    _user_meta[sid] = {
+        'ip': request.remote_addr or 'unknown',
+        'connect_time': _now_str(),
+        'last_msg_time': '',
+    }
     if _is_web_client():
         _admin_sids.add(sid)
     print(f"[+] {sid} connected{' (admin)' if sid in _admin_sids else ''}")
@@ -238,6 +501,7 @@ def handle_connect(auth=None):
 def handle_disconnect():
     sid = getattr(request, 'sid')
     _admin_sids.discard(sid)
+    _user_meta.pop(sid, None)
     username = _sid_to_user.pop(sid, None)
     if username:
         _user_to_sids[username].discard(sid)
@@ -278,6 +542,13 @@ def handle_join(data):
     if username in _user_to_sids and sid not in _user_to_sids[username]:
         emit("error", {"text": "该用户名已被使用，请换一个。"})
         return
+
+    # 封禁检查
+    ip = request.remote_addr or ''
+    banned, reason = _is_banned(username, ip)
+    if banned:
+        emit("error", {"text": reason})
+        return
     old_name = _sid_to_user.get(sid)
 
     if old_name and old_name != username:
@@ -300,10 +571,21 @@ def handle_join(data):
             save_user_avatar(username, avatar)
         socketio.emit("system", {"text": f"{username} has joined the chat."})
 
+        # 推送置顶公告和欢迎语给新用户
+        ann = _get_announcement()
+        if ann['text']:
+            emit("announcement", ann, to=sid)
+        config = _get_room_config()
+        if config.get('welcome_msg', '').strip():
+            emit("system", {"text": f"👋 {config['welcome_msg']}"}, to=sid)
+
         # 推送历史消息给新加入的用户
         history = get_history()
         for msg in history:
-            msg['avatar'] = _user_avatar.get(msg['user'], '')
+            avatar = _user_avatar.get(msg['user'], '')
+            if not avatar:
+                avatar = get_user_avatar(msg['user'])
+            msg['avatar'] = avatar
             emit("message", msg, to=sid)
             
     _broadcast_userlist()
@@ -319,10 +601,26 @@ def handle_message(data):
 
     sid = getattr(request, 'sid')
     rate_key = request.remote_addr or sid
+    # 更新最后发言时间
+    if sid in _user_meta:
+        _user_meta[sid]['last_msg_time'] = _now_str()
     user = _sid_to_user.get(sid, "Anonymous")
-    text = str(data.get("text", ""))[:MAX_MSG_LEN]
+    config = _get_room_config()
+    max_len = int(config.get('max_msg_len', MAX_MSG_LEN))
+    text = str(data.get("text", ""))[:max_len]
     ts = _now_str()
 
+    if not text.strip():
+        return
+
+    # 禁言检查
+    muted, reason = _is_muted(user)
+    if muted:
+        emit("error", {"text": reason})
+        return
+
+    # 敏感词过滤
+    text = _filter_text(text)
     if not text.strip():
         return
 
@@ -391,6 +689,219 @@ def handle_broadcast(data):
 
     print(f"[ADMIN] 系统公告: {text[:80]}{'…' if len(text) > 80 else ''}")
     socketio.emit("system", {"text": f"📢 {text}"})
+
+
+# ── 管理员数据查询 ────────────────────────────────────────
+
+@socketio.on("get_messages")
+def handle_get_messages(data):
+    if not _require_auth() or not _is_admin():
+        return
+    limit = int(data.get('limit', 50)) if isinstance(data, dict) else 50
+    offset = int(data.get('offset', 0)) if isinstance(data, dict) else 0
+    user_filter = str(data.get('user', '')) if isinstance(data, dict) else ''
+    keyword = str(data.get('keyword', '')) if isinstance(data, dict) else ''
+    total, messages = get_messages_page(limit, offset, user_filter, keyword)
+    for msg in messages:
+        msg['avatar'] = _user_avatar.get(msg['user'], '')
+    emit("messages_page", {"messages": messages, "total": total, "limit": limit, "offset": offset})
+
+
+@socketio.on("get_stats")
+def handle_get_stats():
+    if not _require_auth() or not _is_admin():
+        return
+    emit("stats", get_stats())
+
+
+# ── 禁言 / 封禁 ────────────────────────────────────────────
+
+@socketio.on("mute_user")
+def handle_mute_user(data):
+    if not _require_auth() or not _is_admin():
+        return
+    target = str(data.get('target', '')).strip() if isinstance(data, dict) else ''
+    minutes = int(data.get('minutes', 5)) if isinstance(data, dict) else 5
+    if not target:
+        return
+    _add_ban(target, 'mute', minutes)
+    print(f"[ADMIN] 禁言 {target} {minutes} 分钟")
+    emit("system", {"text": f"{target} 已被禁言 {minutes} 分钟"}, broadcast=True)
+    _broadcast_userlist()
+
+
+@socketio.on("unmute_user")
+def handle_unmute_user(data):
+    if not _require_auth() or not _is_admin():
+        return
+    target = str(data.get('target', '')).strip() if isinstance(data, dict) else ''
+    if not target:
+        return
+    _remove_ban(target, 'mute')
+    print(f"[ADMIN] 解除禁言 {target}")
+    emit("system", {"text": f"{target} 已被解除禁言"}, broadcast=True)
+
+
+@socketio.on("ban_user")
+def handle_ban_user(data):
+    if not _require_auth() or not _is_admin():
+        return
+    target = str(data.get('target', '')).strip() if isinstance(data, dict) else ''
+    minutes = int(data.get('minutes', 0)) if isinstance(data, dict) else 0
+    if not target:
+        return
+    _add_ban(target, 'ban', minutes)
+    label = f'{minutes} 分钟' if minutes > 0 else '永久'
+    print(f"[ADMIN] 封禁 {target} ({label})")
+    # 断开被封用户的所有连接
+    for s in list(_user_to_sids.get(target, set())):
+        socketio.server.disconnect(s)
+    emit("system", {"text": f"{target} 已被封禁（{label}）"}, broadcast=True)
+    _broadcast_userlist()
+
+
+@socketio.on("unban_user")
+def handle_unban_user(data):
+    if not _require_auth() or not _is_admin():
+        return
+    target = str(data.get('target', '')).strip() if isinstance(data, dict) else ''
+    if not target:
+        return
+    _remove_ban(target, 'ban')
+    print(f"[ADMIN] 解除封禁 {target}")
+    emit("system", {"text": f"{target} 已被解除封禁"}, broadcast=True)
+
+
+@socketio.on("list_bans")
+def handle_list_bans():
+    if not _require_auth() or not _is_admin():
+        return
+    emit("ban_list", {"bans": _get_bans()})
+
+
+# ── 敏感词 ────────────────────────────────────────────────
+
+@socketio.on("add_sensitive_word")
+def handle_add_sensitive_word(data):
+    if not _require_auth() or not _is_admin():
+        return
+    word = str(data.get('word', '')).strip() if isinstance(data, dict) else ''
+    if not word:
+        return
+    _add_sensitive_word(word)
+    print(f"[ADMIN] 添加敏感词: {word}")
+    emit("sensitive_words", {"words": list(_SENSITIVE_WORDS)})
+
+
+@socketio.on("remove_sensitive_word")
+def handle_remove_sensitive_word(data):
+    if not _require_auth() or not _is_admin():
+        return
+    word = str(data.get('word', '')).strip() if isinstance(data, dict) else ''
+    if not word:
+        return
+    _remove_sensitive_word(word)
+    print(f"[ADMIN] 删除敏感词: {word}")
+    emit("sensitive_words", {"words": list(_SENSITIVE_WORDS)})
+
+
+@socketio.on("list_sensitive_words")
+def handle_list_sensitive_words():
+    if not _require_auth() or not _is_admin():
+        return
+    emit("sensitive_words", {"words": list(_SENSITIVE_WORDS)})
+
+
+# ── 消息撤回 ────────────────────────────────────────────────
+
+@socketio.on("revoke_message")
+def handle_revoke_message(data):
+    if not _require_auth() or not _is_admin():
+        return
+    msg_id = data.get('id') if isinstance(data, dict) else None
+    if msg_id is None:
+        return
+    _revoke_message(int(msg_id))
+    print(f"[ADMIN] 撤回消息 {msg_id}")
+    socketio.emit("message_revoked", {"id": msg_id})
+
+
+# ── 置顶公告 ────────────────────────────────────────────────
+
+@socketio.on("get_announcement")
+def handle_get_announcement():
+    if not _require_auth() or not _is_admin():
+        return
+    emit("announcement", _get_announcement())
+
+
+@socketio.on("set_announcement")
+def handle_set_announcement(data):
+    if not _require_auth() or not _is_admin():
+        return
+    text = str(data.get('text', '')).strip() if isinstance(data, dict) else ''
+    if not text:
+        return
+    _set_announcement(text)
+    print(f"[ADMIN] 设置公告: {text[:50]}")
+    socketio.emit("announcement", _get_announcement())
+
+
+@socketio.on("clear_announcement")
+def handle_clear_announcement():
+    if not _require_auth() or not _is_admin():
+        return
+    _set_announcement('')
+    print(f"[ADMIN] 清除公告")
+    socketio.emit("announcement_cleared")
+
+
+# ── 房间配置 ────────────────────────────────────────────────
+
+@socketio.on("get_room_config")
+def handle_get_room_config():
+    if not _require_auth() or not _is_admin():
+        return
+    emit("room_config", _get_room_config())
+
+
+@socketio.on("set_room_config")
+def handle_set_room_config(data):
+    if not _require_auth() or not _is_admin():
+        return
+    if not isinstance(data, dict):
+        return
+    key = str(data.get('key', '')).strip()
+    value = str(data.get('value', '')).strip()
+    if not key:
+        return
+    allowed = {'room_name', 'welcome_msg', 'max_msg_len'}
+    if key not in allowed:
+        return
+    _set_room_config(key, value)
+    print(f"[ADMIN] 配置 {key} = {value[:30]}")
+    emit("room_config", _get_room_config())
+
+
+# ── 聊天导出 ────────────────────────────────────────────────
+
+@socketio.on("export_chat")
+def handle_export_chat(data):
+    if not _require_auth() or not _is_admin():
+        return
+    fmt = str(data.get('format', 'json')).strip().lower() if isinstance(data, dict) else 'json'
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, user, text, time, revoked FROM messages ORDER BY id ASC"
+        ).fetchall()
+    msgs = [dict(r) for r in rows]
+    if fmt == 'txt':
+        lines = [f"[{m['time']}] {m['user']}: {m['text']}" for m in msgs]
+        emit("export_data", {"data": '\n'.join(lines), "format": "txt"})
+    else:
+        import json
+        emit("export_data", {"data": json.dumps(msgs, ensure_ascii=False, indent=2), "format": "json"})
 
 
 if __name__ == "__main__":
