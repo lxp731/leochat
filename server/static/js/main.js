@@ -162,7 +162,7 @@ function updateUL() {
     .map(u => {
       const hasAvatar = !!(u.avatar);
       const avatarContent = hasAvatar
-        ? `<img src="/avatar/${esc(u.avatar)}" alt="${esc(u.name)}">`
+        ? `<img src="/static/avatars/${esc(u.avatar)}" alt="${esc(u.name)}">`
         : esc(init(u.name));
       const avatarStyle = hasAvatar
         ? ''

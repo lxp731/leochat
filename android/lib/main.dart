@@ -251,6 +251,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _msgCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   bool _connected = false;
+  String? _errorText;
 
   @override
   void initState() {
@@ -312,6 +313,18 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     });
+    _socket.on('message_deleted', (data) {
+      if (data is Map && mounted) {
+        setState(() {
+          _messages.removeWhere((m) => m['id'] == data['id']);
+        });
+      }
+    });
+    _socket.on('error', (data) {
+      if (data is Map && mounted) {
+        setState(() => _errorText = data['text']?.toString() ?? 'Error');
+      }
+    });
     _socket.connect();
   }
 
@@ -340,6 +353,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_errorText != null) {
+      final text = _errorText!;
+      _errorText = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(text), backgroundColor: Colors.red.shade700),
+          );
+        }
+      });
+    }
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(

@@ -44,6 +44,9 @@ MAX_NAME_LEN = 20
 RATE_WINDOW = 2          # 速率限制窗口 (秒)
 RATE_MAX = 10            # 窗口内最大消息数 (调大以优化体验)
 
+RESERVED_NAMES_LOWER = {"system", "anonymous", "admin", "administrator"}
+RESERVED_NAMES_EXACT = {"管理员", "系统"}
+
 CST = timezone(timedelta(hours=8))
 
 AVATAR_DIR = os.path.join(os.path.dirname(__file__), 'static', 'avatars')
@@ -62,6 +65,11 @@ def init_db():
                 last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # 迁移：给已有 users 表增加 avatar 列
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT ''")
+        except sqlite3.OperationalError:
+            pass  # 列已存在
         conn.execute("""
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -73,6 +81,7 @@ def init_db():
         """)
         conn.commit()
 
+
 def save_user(username):
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute(
@@ -80,6 +89,24 @@ def save_user(username):
             (username,)
         )
         conn.commit()
+
+
+def save_user_avatar(username: str, avatar: str) -> None:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE users SET avatar = ? WHERE username = ?",
+            (avatar, username)
+        )
+        conn.commit()
+
+
+def get_user_avatar(username: str) -> str:
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT avatar FROM users WHERE username = ?",
+            (username,)
+        ).fetchone()
+    return (row[0] if row and row[0] else "")
 
 def save_message(user, text, time_str) -> int:
     with sqlite3.connect(DB_PATH) as conn:
@@ -240,7 +267,17 @@ def handle_join(data):
     if not username:
         return
 
+    # 保留名检查
+    if username.lower() in RESERVED_NAMES_LOWER or username in RESERVED_NAMES_EXACT:
+        emit("error", {"text": "该用户名不可使用，请换一个。"})
+        return
+
     sid = getattr(request, 'sid')
+
+    # 同名检查：另一个 sid 已经占用该用户名
+    if username in _user_to_sids and sid not in _user_to_sids[username]:
+        emit("error", {"text": "该用户名已被使用，请换一个。"})
+        return
     old_name = _sid_to_user.get(sid)
 
     if old_name and old_name != username:
@@ -253,7 +290,14 @@ def handle_join(data):
 
     if username != old_name:
         save_user(username)
-        _user_avatar[username] = _pick_avatar(username)
+        # 头像：优先从数据库恢复，若无或被占用则随机分配
+        saved = get_user_avatar(username)
+        if saved and saved not in {v for k, v in _user_avatar.items() if k != username}:
+            _user_avatar[username] = saved
+        else:
+            avatar = _pick_avatar(username)
+            _user_avatar[username] = avatar
+            save_user_avatar(username, avatar)
         socketio.emit("system", {"text": f"{username} has joined the chat."})
 
         # 推送历史消息给新加入的用户
