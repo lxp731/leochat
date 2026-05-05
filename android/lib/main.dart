@@ -252,6 +252,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollCtrl = ScrollController();
   bool _connected = false;
   String? _errorText;
+  String? _announcementText;
 
   @override
   void initState() {
@@ -337,6 +338,14 @@ class _ChatScreenState extends State<ChatScreen> {
         setState(() => _errorText = data['text']?.toString() ?? 'Error');
       }
     });
+    _socket.on('announcement', (data) {
+      if (data is Map && mounted) {
+        setState(() => _announcementText = data['text']?.toString() ?? '');
+      }
+    });
+    _socket.on('announcement_cleared', (_) {
+      if (mounted) setState(() => _announcementText = null);
+    });
     _socket.connect();
   }
 
@@ -401,6 +410,23 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
+          if (_announcementText != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              color: Colors.amber.shade100,
+              child: Row(
+                children: [
+                  const Text('📌 ', style: TextStyle(fontSize: 14)),
+                  Expanded(
+                    child: Text(
+                      _announcementText!,
+                      style: TextStyle(fontSize: 13, color: Colors.amber.shade900),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: ListView.builder(
               controller: _scrollCtrl,

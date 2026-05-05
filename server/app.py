@@ -496,10 +496,12 @@ def handle_connect(auth=None):
         _admin_sids.add(sid)
     # 发送服务端 CST 时间，前端用于日期分割线和时间显示
     now_cst = datetime.now(CST)
+    config = _get_room_config()
     emit("server_time", {
         "timestamp": now_cst.isoformat(),
         "date": now_cst.strftime("%Y-%m-%d"),
         "time": now_cst.strftime("%H:%M:%S"),
+        "room_name": config.get("room_name", "Leochat"),
     })
     print(f"[+] {sid} connected{' (admin)' if sid in _admin_sids else ''}")
 
@@ -716,7 +718,7 @@ def handle_get_messages(data):
 
 @socketio.on("get_stats")
 def handle_get_stats():
-    if not _require_auth() or not _is_admin():
+    if not _require_auth():
         return
     emit("stats", get_stats())
 

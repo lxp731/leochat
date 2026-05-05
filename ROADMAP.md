@@ -42,6 +42,10 @@
 - [x] Nerd Font 图标美化
 - [x] 自动重连支持（带指数退避）
 - [x] 配置文件系统（~/.config/leochat/config.toml，支持 CLI 参数/环境变量覆盖）
+- [x] 头像 emoji 映射（服务端分配头像 → 终端 emoji 显示）
+- [x] 消息删除同步（监听 `message_deleted` 事件）
+- [x] 消息撤回同步（监听 `message_revoked` 事件，撤回消息加 `〈〉` 标识）
+- [x] 置顶公告显示（监听 `announcement` 事件）
 
 #### Android 客户端
 - [x] Modern 登录界面（渐变背景 + 装饰元素）

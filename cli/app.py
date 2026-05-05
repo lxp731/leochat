@@ -58,6 +58,23 @@ APP_STYLE = Style.from_dict(
     }
 )
 
+# ── 头像 emoji 映射 ──────────────────────────────────
+
+AVATAR_EMOJI = {
+    "cabbage_dog": "🐶", "face_cat": "😺", "fatty_tigger": "🐯",
+    "grey_cat": "🐱", "lovely_puppy": "🐕", "prank1": "😜",
+    "prank2": "🤪", "pride_cat": "😼", "Tom": "😾",
+    "UltraMan": "🦸", "working_cat": "😸",
+}
+
+def _avatar_emoji(filename: str) -> str:
+    """从头像文件名提取 emoji，无匹配时回退"""
+    if not filename:
+        return "👤"
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    return AVATAR_EMOJI.get(stem, "👤")
+
+
 # ── 类型别名 ──────────────────────────────────────────
 
 Frag = Tuple[str, str]  # (style_class, text)
@@ -78,7 +95,9 @@ class ChatClient:
         self.exit_flag = False
         self.connected = False
         self._users: List[str] = []
-        
+        self._user_avatars: Dict[str, str] = {}  # username → emoji
+        self._room_name: str = "Leochat"
+
         self._lock = threading.Lock()
         self._app: Application | None = None
         
@@ -113,6 +132,24 @@ class ChatClient:
     def _register_events(self) -> None:
         sio: Any = self.sio
 
+        @sio.on("server_time")
+        def on_server_time(data):
+            if isinstance(data, dict) and data.get("room_name"):
+                self._room_name = data["room_name"]
+                self._invalidate()
+
+        @sio.on("stats")
+        def on_stats(data):
+            if isinstance(data, dict):
+                lines = [
+                    f"󰄬 服务器统计",
+                    f"  今日消息: {data.get('today_msgs', 0)}",
+                    f"  今日访客: {data.get('today_visitors', 0)}",
+                    f"  总消息数: {data.get('total_msgs', 0)}",
+                    f"  总用户数: {data.get('total_users', 0)}",
+                ]
+                self._add({"type": "info", "text": "\n".join(lines)})
+
         @sio.event
         def connect():
             self.connected = True
@@ -131,12 +168,18 @@ class ChatClient:
         @sio.on("message")
         def on_message(data):
             if isinstance(data, dict):
+                avatar = data.get("avatar", "")
+                user = data.get("user", "???")
+                if avatar and user not in self._user_avatars:
+                    self._user_avatars[user] = _avatar_emoji(avatar)
                 msg = {
                     "type": "chat",
+                    "id": data.get("id"),
                     "time": data.get("time", _now()),
-                    "user": data.get("user", "???"),
+                    "user": user,
                     "text": data.get("text", ""),
-                    "self": data.get("user") == self.username,
+                    "self": user == self.username,
+                    "revoked": data.get("revoked", False),
                 }
                 self._add(msg)
 
@@ -154,11 +197,43 @@ class ChatClient:
         def on_userlist(data):
             if isinstance(data, dict):
                 users = data.get("users", [])
-                # 兼容新旧格式：新格式 [{"name": ...}], 旧格式 ["name", ...]
                 if users and isinstance(users[0], dict):
                     self._users = [u.get("name", "?") for u in users]
+                    for u in users:
+                        name = u.get("name", "")
+                        avatar = u.get("avatar", "")
+                        if name and avatar:
+                            self._user_avatars[name] = _avatar_emoji(avatar)
                 else:
                     self._users = list(users)
+
+        @sio.on("message_deleted")
+        def on_message_deleted(data):
+            if isinstance(data, dict):
+                msg_id = data.get("id")
+                with self._lock:
+                    self._messages = [m for m in self._messages if m.get("id") != msg_id]
+                self._invalidate()
+
+        @sio.on("message_revoked")
+        def on_message_revoked(data):
+            if isinstance(data, dict):
+                msg_id = data.get("id")
+                with self._lock:
+                    for m in self._messages:
+                        if m.get("id") == msg_id and m["type"] == "chat":
+                            m["text"] = "管理员撤回了一条消息"
+                            m["revoked"] = True
+                self._invalidate()
+
+        @sio.on("announcement")
+        def on_announcement(data):
+            if isinstance(data, dict) and data.get("text"):
+                self._add({"type": "system", "text": f"📌 置顶公告: {data['text']}"})
+
+        @sio.on("announcement_cleared")
+        def on_announcement_cleared():
+            self._add({"type": "info", "text": "📌 置顶公告已清除"})
 
     # ── UI 组件 ───────────────────────────────────────
 
@@ -171,7 +246,7 @@ class ChatClient:
         box_w = max(w - 2, 10)
         return [
             ("class:header.box", "╭" + "─" * box_w + "╮\n"),
-            ("class:header.title", f"│ {'󰭹 Leochat CLI (TUI)':^{box_w}} │\n"),
+            ("class:header.title", f"│ {'󰭹 ' + self._room_name:^{box_w}} │\n"),
             ("class:header.welcome", f"│ {'󱑎 欢迎, ' + self.username + '!':^{box_w}} │\n"),
             ("class:header.box", "╰" + "─" * box_w + "╯"),
         ]
@@ -200,12 +275,13 @@ class ChatClient:
         if not msgs:
             return [("class:msg.time", "没有消息...\n")]
 
-        # ── 第一遍：计算聊天消息中"󰙯 用户名"的最大显示宽度 ──
+        # ── 第一遍：计算聊天消息中"emoji 用户名"的最大显示宽度 ──
         max_user_w = 0
         for m in msgs:
             if m["type"] == "chat":
                 label = "你" if m.get("self") else m["user"]
-                w = _display_w(f"󰙯 {label}")
+                emoji = "👤" if m.get("self") else self._user_avatars.get(m["user"], "👤")
+                w = _display_w(f"{emoji} {label}")
                 if w > max_user_w:
                     max_user_w = w
 
@@ -219,15 +295,19 @@ class ChatClient:
                 ts = m["time"]
                 label = "你" if m.get("self") else m["user"]
                 style = "msg.self" if m.get("self") else "msg.other"
-                user_block = f"󰙯 {label}"
+                emoji = "👤" if m.get("self") else self._user_avatars.get(m["user"], "👤")
+                user_block = f"{emoji} {label}"
                 pad_n = max_user_w - _display_w(user_block)
+                text = m["text"]
+                if m.get("revoked"):
+                    text = f"〈{text}〉"
 
                 fragments.append(("class:msg.time", f"󱑎 {ts}  "))
                 fragments.append((f"class:{style}", user_block))
                 if pad_n > 0:
                     fragments.append(("class:msg.pad", " " * pad_n))
                 fragments.append(("class:msg.pad", " "))
-                fragments.append(("class:msg.text", f"󰭹 {m['text']}"))
+                fragments.append(("class:msg.text", f"󰭹 {text}"))
             elif t == "system":
                 fragments.append(("class:msg.system", m["text"]))
             elif t == "info":
@@ -275,12 +355,22 @@ class ChatClient:
                 if self._app: self._app.exit()
                 return
             if cmd == "users":
-                ul = ", ".join(self._users) if self._users else "无"
-                self._add({"type": "info", "text": f"󰄬 在线用户: {ul}"})
+                if self._users:
+                    ul = ", ".join(f"{self._user_avatars.get(u, '👤')} {u}" for u in self._users)
+                else:
+                    ul = "无"
+                self._add({"type": "info", "text": f"󰄬 在线用户({len(self._users)}): {ul}"})
+                self._input_buffer.text = ""
+                return
+            if cmd == "stats":
+                if self.connected:
+                    self.sio.emit("get_stats")
+                else:
+                    self._add({"type": "error", "text": "󰅚 未连接服务器"})
                 self._input_buffer.text = ""
                 return
             if cmd == "help":
-                self._add({"type": "info", "text": "󰄬 命令: /users /exit /help"})
+                self._add({"type": "info", "text": "󰄬 命令: /users /stats /exit /help"})
                 self._input_buffer.text = ""
                 return
             self._add({"type": "error", "text": f"󰅚 未知命令: /{cmd}"})
