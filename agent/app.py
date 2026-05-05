@@ -177,7 +177,12 @@ def _on_batch_timeout():
     """批处理窗口到期，调用 LLM 决策（支持 function calling 搜索）"""
     global _batch_timer
 
-    lines = list(_history)
+    # 1. 立即在锁内释放定时器标志，并抓取当前历史快照。
+    # 这样在模型思考的几秒钟内，如果来了新消息，就能触发新的批处理定时器，不会漏消息。
+    with _batch_lock:
+        _batch_timer = None
+        lines = list(_history)
+
     system_prompt = build_system_prompt()
     user_prompt = build_user_prompt(lines)
 
@@ -188,61 +193,57 @@ def _on_batch_timeout():
 
     tools = [WEB_SEARCH_TOOL] if tavily_client else None
 
-    try:
-        for _round in range(3):
-            try:
-                kwargs = {
-                    "model": LLM_MODEL,
-                    "messages": messages,
-                    "temperature": LLM_TEMP,
-                    "max_tokens": LLM_MAX_TOKENS,
-                }
-                if tools:
-                    kwargs["tools"] = tools
-                    kwargs["tool_choice"] = "auto"
+    for _round in range(3):
+        try:
+            kwargs = {
+                "model": LLM_MODEL,
+                "messages": messages,
+                "temperature": LLM_TEMP,
+                "max_tokens": LLM_MAX_TOKENS,
+            }
+            if tools:
+                kwargs["tools"] = tools
+                kwargs["tool_choice"] = "auto"
 
-                resp = client.chat.completions.create(**kwargs)
-                msg = resp.choices[0].message
+            resp = client.chat.completions.create(**kwargs)
+            msg = resp.choices[0].message
 
-                # 处理 tool calls：执行搜索，结果反馈给 LLM 继续
-                if msg.tool_calls:
-                    messages.append(msg)
-                    for tc in msg.tool_calls:
-                        if tc.function.name == "web_search":
-                            args = json.loads(tc.function.arguments)
-                            result = execute_web_search(args.get("query", ""))
-                            print(f"[SEARCH] {args.get('query', '')[:80]}")
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc.id,
-                                "content": result,
-                            })
-                    continue  # 回到 LLM 继续决策
+            # 处理 tool calls：执行搜索，结果反馈给 LLM 继续
+            if msg.tool_calls:
+                messages.append(msg)
+                for tc in msg.tool_calls:
+                    if tc.function.name == "web_search":
+                        args = json.loads(tc.function.arguments)
+                        result = execute_web_search(args.get("query", ""))
+                        print(f"[SEARCH] {args.get('query', '')[:80]}")
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": result,
+                        })
+                continue  # 回到 LLM 继续决策
 
-                # 没有 tool call — 处理文本回复
-                reply = (msg.content or "").strip()
-                print(f"[LLM] {reply[:120]}{'...' if len(reply) > 120 else ''}")
+            # 没有 tool call — 处理文本回复
+            reply = (msg.content or "").strip()
+            print(f"[LLM] {reply[:120]}{'...' if len(reply) > 120 else ''}")
 
-                if reply.upper().startswith("[SILENT]") or reply == "[SILENT]":
-                    return
-
-                if reply.startswith("[SILENT]") and len(reply) > 8:
-                    reply = reply[8:].strip()
-
-                if not reply:
-                    return
-
-                sio.emit("send_message", {"text": reply})
-                global _last_msg_time
-                _last_msg_time = time.time()
+            if reply.upper().startswith("[SILENT]") or reply == "[SILENT]":
                 return
 
-            except Exception as exc:
-                print(f"[ERROR] LLM 调用失败: {exc}")
+            if reply.startswith("[SILENT]") and len(reply) > 8:
+                reply = reply[8:].strip()
+
+            if not reply:
                 return
-    finally:
-        with _batch_lock:
-            _batch_timer = None
+
+            sio.emit("send_message", {"text": reply})
+            global _last_msg_time
+            _last_msg_time = time.time()
+            return
+
+        except Exception as exc:
+            print(f"[ERROR] LLM 调用失败: {exc}")
+            return
 
 
 def schedule_decision():
@@ -281,10 +282,18 @@ def disconnect():
 def on_message(data):
     if not isinstance(data, dict):
         return
-    if should_skip(data):
+        
+    user = data.get("user", "")
+    if not user:
         return
+
     line = format_msg(data)
     _history.append(line)
+
+    # 核心修复：如果是自己发的消息，只记入历史，绝对不触发新一轮思考
+    if user == AGENT_NAME:
+        return
+
     schedule_decision()
 
 
