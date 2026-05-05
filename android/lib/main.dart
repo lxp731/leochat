@@ -251,6 +251,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _msgCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   bool _connected = false;
+  int _onlineCount = 0;
   String? _errorText;
   String? _announcementText;
 
@@ -306,7 +307,9 @@ class _ChatScreenState extends State<ChatScreen> {
     _socket.on('userlist', (data) {
       if (data is Map && mounted) {
         setState(() {
-          for (final u in (data['users'] as List? ?? [])) {
+          final users = (data['users'] as List? ?? []);
+          _onlineCount = users.length;
+          for (final u in users) {
             if (u is Map && u['name'] != null && u['avatar'] != null && u['avatar'].toString().isNotEmpty) {
               _userAvatars[u['name'].toString()] = u['avatar'].toString();
             }
@@ -394,7 +397,18 @@ class _ChatScreenState extends State<ChatScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Leochat', style: TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF1E293B))),
+            Text.rich(
+              TextSpan(
+                style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF1E293B)),
+                children: [
+                  const TextSpan(text: 'Leochat'),
+                  TextSpan(
+                    text: '（$_onlineCount人）',
+                    style: TextStyle(fontSize: (Theme.of(context).textTheme.titleLarge?.fontSize ?? 22) - 6),
+                  ),
+                ],
+              ),
+            ),
             Row(
               children: [
                 Container(
