@@ -316,8 +316,9 @@ class ChatClient:
                 chat_indices.append(len(raw_rows) - 1)
             remaining -= dl
             idx -= 1
+        n = len(raw_rows)
+        chat_indices = [n - 1 - i for i in chat_indices]
         raw_rows.reverse()
-        chat_indices.reverse()
 
         # ── 仅对可见的 chat 消息计算最大用户名宽度 ──
         max_user_w = 0

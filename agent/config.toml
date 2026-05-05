@@ -1,0 +1,19 @@
+[server]
+host = "127.0.0.1"
+port = 5000
+
+[agent]
+# 在聊天室中的显示名称
+name = "小墨"
+# 每次决策时取最近多少条消息作为上下文
+context_size = 100
+
+# LLM 配置
+[llm]
+api_base = "https://api.deepseek.com"
+model = "deepseek-v4-pro"
+# API key 从环境变量 $DEEPSEEK_API_KEY 读取
+# 温度参数 (0-2)，越高越随机
+temperature = 0.9
+# 最大输出 token 数
+max_tokens = 512

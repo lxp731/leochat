@@ -9,6 +9,11 @@
       "root": "server",
       "venvPath": "server",
       "venv": ".venv"
+    },
+    {
+      "root": "agent",
+      "venvPath": "agent",
+      "venv": ".venv"
     }
   ]
 }

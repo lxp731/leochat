@@ -1,0 +1,10 @@
+[project]
+name = "leochat-agent"
+version = "0.1.0"
+description = "Leochat AI Agent — 自主聊天机器人"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "python-socketio[client]>=5.16.1",
+    "openai>=1.0.0",
+]
