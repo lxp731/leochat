@@ -288,7 +288,7 @@ class _ChatScreenState extends State<ChatScreen> {
             m['time'] == data['time']
           );
           if (!isDuplicate) {
-            _messages.add(Map<String, dynamic>.from(data));
+            _messages.insert(0, Map<String, dynamic>.from(data));
           }
           if (data['user'] != null && data['avatar'] != null && data['avatar'].toString().isNotEmpty) {
             _userAvatars[data['user'].toString()] = data['avatar'].toString();
@@ -299,7 +299,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
     _socket.on('system', (data) {
       if (data is Map && mounted) {
-        setState(() => _messages.add({'user': 'System', 'text': data['text'], 'isSystem': true}));
+        setState(() => _messages.insert(0, {'user': 'System', 'text': data['text'], 'isSystem': true}));
         _scrollToBottom();
       }
     });
@@ -359,7 +359,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _scrollToBottom() {
     Future.delayed(const Duration(milliseconds: 100), () {
       if (_scrollCtrl.hasClients) {
-        _scrollCtrl.animateTo(_scrollCtrl.position.maxScrollExtent, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
+        _scrollCtrl.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
       }
     });
   }
@@ -429,6 +429,7 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           Expanded(
             child: ListView.builder(
+              reverse: true,
               controller: _scrollCtrl,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
               itemCount: _messages.length,
