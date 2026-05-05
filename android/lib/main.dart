@@ -1,17 +1,26 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 // 默认值从环境变量读取
 const String defaultIp = String.fromEnvironment('SERVER_IP', defaultValue: '192.168.1.45');
 const String defaultPort = String.fromEnvironment('SERVER_PORT', defaultValue: '5000');
 String kServerUrl = 'http://$defaultIp:$defaultPort';
 
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
+  // 初始化本地通知
+  const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
+  const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
+  await flutterLocalNotificationsPlugin.initialize(
+    settings: initializationSettings,
+  );
+
   // 加载保存的服务器地址
   final prefs = await SharedPreferences.getInstance();
   final savedUrl = prefs.getString('server_url');
@@ -46,6 +55,37 @@ class LeochatApp extends StatelessWidget {
       home: const UsernameScreen(),
     );
   }
+}
+
+// ── 全局头像构建工具 ────────────────────────────────────────────
+Widget buildAvatarWidget(String name, String avatarUrl, double size) {
+  Widget fallback() {
+    return CircleAvatar(
+      radius: size / 2,
+      backgroundColor: Color((name.hashCode * 0xFFFFFF).toInt()).withOpacity(1.0).withBlue(200),
+      child: Text(
+        name.isNotEmpty ? name.substring(0, 1).toUpperCase() : 'A',
+        style: TextStyle(color: Colors.white, fontSize: size * 0.4, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  if (avatarUrl.isNotEmpty) {
+    return ClipOval(
+      child: Image.network(
+        '$kServerUrl/static/avatars/$avatarUrl',
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) => fallback(),
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return fallback();
+        },
+      ),
+    );
+  }
+  return fallback();
 }
 
 // ── 现代化的登录界面 ────────────────────────────────────────────
@@ -244,21 +284,88 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   late IO.Socket _socket;
   final List<Map<String, dynamic>> _messages = [];
   final Map<String, String> _userAvatars = {};
+  List<Map<String, dynamic>> _onlineUsersList = [];
+  
   final TextEditingController _msgCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
+  
   bool _connected = false;
   int _onlineCount = 0;
   String? _errorText;
   String? _announcementText;
+  
+  bool _isMuted = false;
+  bool _isBackground = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _requestNotificationPermission();
+    _loadMuteState();
     _connect();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _socket.dispose();
+    _msgCtrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isBackground = state == AppLifecycleState.paused || 
+                    state == AppLifecycleState.inactive || 
+                    state == AppLifecycleState.hidden;
+  }
+
+  Future<void> _requestNotificationPermission() async {
+    final AndroidFlutterLocalNotificationsPlugin? androidImplementation =
+        flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    await androidImplementation?.requestNotificationsPermission();
+  }
+
+  Future<void> _loadMuteState() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _isMuted = prefs.getBool('is_muted') ?? false;
+    });
+  }
+
+  Future<void> _toggleMute() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _isMuted = !_isMuted;
+    });
+    await prefs.setBool('is_muted', _isMuted);
+  }
+
+  Future<void> _showNotification(String title, String body) async {
+    if (_isMuted) return;
+    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
+      'leochat_channel', 
+      'LeoChat Messages',
+      channelDescription: 'Notifications for new chat messages',
+      importance: Importance.max,
+      priority: Priority.high,
+      playSound: true,
+      enableVibration: true,
+      fullScreenIntent: true, // 点亮屏幕
+    );
+    const NotificationDetails platformDetails = NotificationDetails(android: androidDetails);
+    await flutterLocalNotificationsPlugin.show(
+      id: DateTime.now().millisecondsSinceEpoch % 100000, 
+      title: title, 
+      body: body, 
+      notificationDetails: platformDetails
+    );
   }
 
   void _connect() {
@@ -295,19 +402,28 @@ class _ChatScreenState extends State<ChatScreen> {
             _userAvatars[data['user'].toString()] = data['avatar'].toString();
           }
         });
+        
+        // 收到他人消息且在后台时，发送通知
+        if (_isBackground && data['user'] != widget.username) {
+          _showNotification(data['user']?.toString() ?? 'Message', data['text']?.toString() ?? '');
+        }
+        
         _scrollToBottom();
       }
     });
+    
     _socket.on('system', (data) {
       if (data is Map && mounted) {
         setState(() => _messages.insert(0, {'user': 'System', 'text': data['text'], 'isSystem': true}));
         _scrollToBottom();
       }
     });
+    
     _socket.on('userlist', (data) {
       if (data is Map && mounted) {
         setState(() {
           final users = (data['users'] as List? ?? []);
+          _onlineUsersList = List<Map<String, dynamic>>.from(users);
           _onlineCount = users.length;
           for (final u in users) {
             if (u is Map && u['name'] != null && u['avatar'] != null && u['avatar'].toString().isNotEmpty) {
@@ -317,6 +433,7 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     });
+    
     _socket.on('message_deleted', (data) {
       if (data is Map && mounted) {
         setState(() {
@@ -324,6 +441,7 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     });
+    
     _socket.on('message_revoked', (data) {
       if (data is Map && mounted) {
         setState(() {
@@ -336,26 +454,30 @@ class _ChatScreenState extends State<ChatScreen> {
         });
       }
     });
+    
     _socket.on('error', (data) {
       if (data is Map && mounted) {
         setState(() => _errorText = data['text']?.toString() ?? 'Error');
       }
     });
+    
     _socket.on('announcement', (data) {
       if (data is Map && mounted) {
         setState(() => _announcementText = data['text']?.toString() ?? '');
       }
     });
+    
     _socket.on('announcement_cleared', (_) {
       if (mounted) setState(() => _announcementText = null);
     });
+    
     _socket.connect();
   }
 
   void _sendMessage() {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty) return;
-    _socket.emit('send_message', {'text': text}); // 服务端现在会自动识别 SID 对应的用户
+    _socket.emit('send_message', {'text': text}); 
     _msgCtrl.clear();
   }
 
@@ -367,12 +489,45 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  @override
-  void dispose() {
-    _socket.dispose();
-    _msgCtrl.dispose();
-    _scrollCtrl.dispose();
-    super.dispose();
+  void _showOnlineUsers() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return SafeArea(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 12),
+                Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+                const SizedBox(height: 16),
+                Text('当前在线 (${_onlineUsersList.length}人)', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Divider(height: 32),
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _onlineUsersList.length,
+                    itemBuilder: (context, index) {
+                      final u = _onlineUsersList[index];
+                      final name = u['name']?.toString() ?? 'Unknown';
+                      final avatarUrl = u['avatar']?.toString() ?? '';
+                      return ListTile(
+                        leading: buildAvatarWidget(name, avatarUrl, 40),
+                        title: Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -388,39 +543,51 @@ class _ChatScreenState extends State<ChatScreen> {
         }
       });
     }
+    
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        centerTitle: false,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text.rich(
-              TextSpan(
-                style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF1E293B)),
+        // 左侧默认返回按钮，或者你可以自定义
+        leading: const BackButton(color: Colors.black87),
+        // 绝对居中的标题
+        centerTitle: true,
+        title: GestureDetector(
+          onTap: _showOnlineUsers,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Leochat', style: TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF1E293B), fontSize: 18)),
+              Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const TextSpan(text: 'Leochat'),
-                  TextSpan(
-                    text: '（$_onlineCount人）',
-                    style: TextStyle(fontSize: (Theme.of(context).textTheme.titleLarge?.fontSize ?? 22) - 6),
+                  Container(
+                    width: 8, height: 8,
+                    decoration: BoxDecoration(color: _connected ? Colors.green : Colors.red, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    _connected ? '$_onlineCount 人在线' : 'Connecting...', 
+                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600)
                   ),
                 ],
               ),
-            ),
-            Row(
-              children: [
-                Container(
-                  width: 8, height: 8,
-                  decoration: BoxDecoration(color: _connected ? Colors.green : Colors.red, shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 6),
-                Text(_connected ? 'Online' : 'Connecting...', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
-              ],
-            ),
-          ],
+            ],
+          ),
         ),
+        // 右侧静音按钮
+        actions: [
+          IconButton(
+            icon: Icon(
+              _isMuted ? Icons.notifications_off : Icons.notifications_active, 
+              color: _isMuted ? Colors.grey : const Color(0xFF6366F1)
+            ),
+            onPressed: _toggleMute,
+            tooltip: _isMuted ? '取消静音' : '静音通知',
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: Column(
         children: [
@@ -519,7 +686,9 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final avatar = _buildAvatar();
+    final name = (message['user'] as String?) ?? 'A';
+    final avatar = buildAvatarWidget(name, avatarUrl, 36);
+    
     final nameWidget = Padding(
       padding: EdgeInsets.only(
         left: isMe ? 0 : 4,
@@ -573,37 +742,6 @@ class _MessageBubble extends StatelessWidget {
         mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: isMe ? [content, const SizedBox(width: 8), avatar] : [avatar, const SizedBox(width: 8), content],
-      ),
-    );
-  }
-
-  Widget _buildAvatar() {
-    final name = (message['user'] as String?) ?? 'A';
-    if (avatarUrl.isNotEmpty) {
-      return ClipOval(
-        child: Image.network(
-          '$kServerUrl/static/avatars/$avatarUrl',
-          width: 36,
-          height: 36,
-          fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) => _fallbackAvatar(name),
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return _fallbackAvatar(name);
-          },
-        ),
-      );
-    }
-    return _fallbackAvatar(name);
-  }
-
-  Widget _fallbackAvatar(String name) {
-    return CircleAvatar(
-      radius: 18,
-      backgroundColor: Color((name.hashCode * 0xFFFFFF).toInt()).withOpacity(1.0).withBlue(200),
-      child: Text(
-        name.substring(0, 1).toUpperCase(),
-        style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
       ),
     );
   }
