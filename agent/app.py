@@ -4,6 +4,7 @@ Leochat AI Agent — 自主聊天机器人
 使用 DeepSeek API 作为推理后端，以普通用户身份加入聊天室。
 自行判断何时发言、说什么内容，不依附于任何人。
 """
+import json
 import os
 import sys
 import time
@@ -60,9 +61,70 @@ if not api_key:
 
 client = OpenAI(api_key=api_key, base_url=LLM_API_BASE)
 
+# ── Web 搜索 (Tavily) ──────────────────────────────────
+
+tavily_api_key = os.environ.get("TAVILY_API_KEY")
+tavily_client = None
+if tavily_api_key:
+    try:
+        from tavily import TavilyClient
+        tavily_client = TavilyClient(api_key=tavily_api_key)
+        print("[+] Tavily 搜索已启用")
+    except ImportError:
+        print("[!] tavily-python 未安装，搜索功能不可用")
+    except Exception as exc:
+        print(f"[!] Tavily 初始化失败: {exc}")
+
+WEB_SEARCH_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "web_search",
+        "description": (
+            "搜索互联网获取实时信息。遇到不懂的梗、缩写、新闻事件、技术概念、"
+            "冷知识等需要查证的内容时使用。就像群友不懂的时候掏出手机搜一下。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索关键词或问题",
+                }
+            },
+            "required": ["query"],
+        },
+    },
+}
+
+
+def execute_web_search(query: str) -> str:
+    """执行 Tavily 搜索，返回格式化的结果文本。"""
+    if not tavily_client:
+        return "搜索功能未配置"
+    try:
+        resp = tavily_client.search(query, max_results=5)
+        results = resp.get("results", [])
+        if not results:
+            return "没有找到相关结果"
+        lines = []
+        for r in results[:5]:
+            title = r.get("title", "")
+            content = r.get("content", "")
+            lines.append(f"- {title}\n  {content[:300]}")
+        return "\n\n".join(lines)
+    except Exception as exc:
+        return f"搜索失败: {exc}"
+
 
 def build_system_prompt() -> str:
     return f"""{PERSONALITY}
+
+---
+工具使用说明：
+你可以使用 web_search 工具搜索互联网来获取实时信息。
+当你不懂某个梗、不确定某个事实、想了解某个话题背景时，用它搜索，就像人拿手机查东西一样。
+搜到的信息用来帮助你理解上下文和自然地参与讨论，不要大段搬运搜索内容，也不要说"我搜了一下"之类的话。
+搜索不到的或不确定的，直接在聊天中说"不太清楚"就好。
 
 ---
 输出格式规则（严格遵守）：
@@ -112,41 +174,72 @@ BATCH_WINDOW = 2.0  # 秒 — 窗口内的消息合批，只调一次 LLM
 
 
 def _on_batch_timeout():
-    """批处理窗口到期，调用 LLM 决策一次"""
+    """批处理窗口到期，调用 LLM 决策（支持 function calling 搜索）"""
     global _batch_timer
 
     lines = list(_history)
     system_prompt = build_system_prompt()
     user_prompt = build_user_prompt(lines)
 
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    tools = [WEB_SEARCH_TOOL] if tavily_client else None
+
     try:
-        resp = client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=LLM_TEMP,
-            max_tokens=LLM_MAX_TOKENS,
-        )
-        reply = resp.choices[0].message.content.strip()
-        print(f"[LLM] {reply[:120]}{'...' if len(reply) > 120 else ''}")
+        for _round in range(3):
+            try:
+                kwargs = {
+                    "model": LLM_MODEL,
+                    "messages": messages,
+                    "temperature": LLM_TEMP,
+                    "max_tokens": LLM_MAX_TOKENS,
+                }
+                if tools:
+                    kwargs["tools"] = tools
+                    kwargs["tool_choice"] = "auto"
 
-        if reply.upper().startswith("[SILENT]") or reply == "[SILENT]":
-            return
+                resp = client.chat.completions.create(**kwargs)
+                msg = resp.choices[0].message
 
-        if reply.startswith("[SILENT]") and len(reply) > 8:
-            reply = reply[8:].strip()
+                # 处理 tool calls：执行搜索，结果反馈给 LLM 继续
+                if msg.tool_calls:
+                    messages.append(msg)
+                    for tc in msg.tool_calls:
+                        if tc.function.name == "web_search":
+                            args = json.loads(tc.function.arguments)
+                            result = execute_web_search(args.get("query", ""))
+                            print(f"[SEARCH] {args.get('query', '')[:80]}")
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": result,
+                            })
+                    continue  # 回到 LLM 继续决策
 
-        if not reply:
-            return
+                # 没有 tool call — 处理文本回复
+                reply = (msg.content or "").strip()
+                print(f"[LLM] {reply[:120]}{'...' if len(reply) > 120 else ''}")
 
-        sio.emit("send_message", {"text": reply})
-        global _last_msg_time
-        _last_msg_time = time.time()
+                if reply.upper().startswith("[SILENT]") or reply == "[SILENT]":
+                    return
 
-    except Exception as exc:
-        print(f"[ERROR] LLM 调用失败: {exc}")
+                if reply.startswith("[SILENT]") and len(reply) > 8:
+                    reply = reply[8:].strip()
+
+                if not reply:
+                    return
+
+                sio.emit("send_message", {"text": reply})
+                global _last_msg_time
+                _last_msg_time = time.time()
+                return
+
+            except Exception as exc:
+                print(f"[ERROR] LLM 调用失败: {exc}")
+                return
     finally:
         with _batch_lock:
             _batch_timer = None
