@@ -103,7 +103,7 @@
 - [x] **头像持久化** — 用户名→头像映射存入 DB，重连不换头像
 - [x] **同名用户拦截** — join 时检测用户名已被其他 SID 占用，拒绝并提示
 - [x] **保留用户名保护** — System、Anonymous、Admin 等名字禁止使用
-- [ ] **锁定 Docker 镜像 Python 版本** — 当前使用 `python:3.14.4-slim`（预发布），应切换到 `python:3.12-slim` 稳定版并生成 `uv.lock`
+- [x] **Python 版本确认** — `python:3.14.4-slim` 已是 `final` 正式版，无需切换
 - [ ] **移除 CLI Dockerfile 硬编码国内镜像源** — `sed` 硬编码清华源，在国际服务器不可达。镜像源应通过 `--build-arg` 注入
 
 ### 🟡 P1 — 影响体验级
@@ -121,9 +121,9 @@
 
 ### 🟢 P2 — 安全加固与优化
 
-- [ ] **Docker healthcheck** — 容器假活但 Socket.IO 已不可用
-- [ ] **Web 端自托管字体** — 当前通过 Google Fonts CDN 加载 Inter，离线环境白屏
-- [ ] **Web 端 CST 时间戳** — 当前客户端 JS 格式化时间，应统一 CST
+- [x] **Docker healthcheck** — `HEALTHCHECK` 每 30s 检查 `/login` 端点，失败自动重启
+- [x] **Web 端自托管字体** — Inter 字体本地 woff2，不依赖 Google Fonts CDN
+- [x] **Web 端 CST 时间戳** — 服务端下发 `server_time`，前端计算偏移量统一用 CST
 
 ---
 

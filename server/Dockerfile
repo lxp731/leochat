@@ -20,4 +20,7 @@ COPY --from=builder /app/static /app/static
 
 EXPOSE 5000
 
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+  CMD python -c "from urllib.request import urlopen; urlopen('http://localhost:5000/login')"
+
 CMD ["python", "app.py"]

@@ -68,13 +68,18 @@ const esc = (s) => String(s)
   .replace(/</g, '&lt;')
   .replace(/>/g, '&gt;');
 
-const now = () => new Date().toLocaleTimeString('zh-CN', {
-  hour: '2-digit', minute: '2-digit'
-});
+// 服务端 CST 时间偏移（秒），用于对齐时区
+let serverTimeOffset = 0;
 
-const dstr = () => new Date().toLocaleDateString('zh-CN', {
-  month: 'long', day: 'numeric', weekday: 'short'
-});
+const serverNow = () => {
+  const d = new Date(Date.now() + serverTimeOffset * 1000);
+  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+};
+
+const serverDstr = () => {
+  const d = new Date(Date.now() + serverTimeOffset * 1000);
+  return d.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' });
+};
 
 const avColor = (n) => {
   let h = 0;
@@ -87,7 +92,7 @@ const init = (n) => (n || '?').slice(0, 2).toUpperCase();
 // ── 消息渲染 ─────────────────────────────────────────
 
 function checkDate() {
-  const d = dstr();
+  const d = serverDstr();
   if (d === lastDate) return;
   lastDate = d;
   const div = document.createElement('div');
@@ -150,7 +155,7 @@ function appendMsg(msgId, user, text, cls, time) {
   bw.className = 'msg-bubble-wrap';
   const t = document.createElement('span');
   t.className = 'msg-time';
-  t.textContent = time || now();
+  t.textContent = time || serverNow();
   const bb = document.createElement('div');
   bb.className = 'msg-bubble';
   bb.textContent = text;
@@ -352,6 +357,14 @@ function showToast(m) {
 
 // ── Socket.IO 事件 ───────────────────────────────────
 
+socket.on('server_time', data => {
+  if (data && data.timestamp) {
+    const serverMs = new Date(data.timestamp).getTime();
+    const clientMs = Date.now();
+    serverTimeOffset = Math.round((serverMs - clientMs) / 1000);
+  }
+});
+
 socket.on('connect', () => {
   connected = true;
   elements.statusDot.style.background = '#4ade80';
@@ -518,7 +531,7 @@ function send() {
   if (!connected) { showToast('连接已断开，请刷新页面'); return; }
 
   me.name = name;
-  socket.emit('send_message', { user: name, text, time: now() });
+  socket.emit('send_message', { user: name, text, time: serverNow() });
   elements.messageInput.value = '';
   elements.messageInput.focus();
 }

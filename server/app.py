@@ -494,6 +494,13 @@ def handle_connect(auth=None):
     }
     if _is_web_client():
         _admin_sids.add(sid)
+    # 发送服务端 CST 时间，前端用于日期分割线和时间显示
+    now_cst = datetime.now(CST)
+    emit("server_time", {
+        "timestamp": now_cst.isoformat(),
+        "date": now_cst.strftime("%Y-%m-%d"),
+        "time": now_cst.strftime("%H:%M:%S"),
+    })
     print(f"[+] {sid} connected{' (admin)' if sid in _admin_sids else ''}")
 
 
