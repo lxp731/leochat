@@ -14,7 +14,12 @@ context_size = 100
 api_base = "https://api.deepseek.com"
 model = "deepseek-v4-pro"
 # API key 从环境变量 $DEEPSEEK_API_KEY 读取
+api_key = "sk-xxx"
 # 温度参数 (0-2)，越高越随机
 temperature = 0.9
 # 最大输出 token 数
 max_tokens = 512
+
+[tavily]
+# Tavily 搜索 API Key
+api_key = "tvly-xxx"

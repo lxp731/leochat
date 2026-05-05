@@ -54,7 +54,7 @@ with open(identity_path, "r") as f:
 
 # ── LLM 客户端 ────────────────────────────────────────
 
-api_key = os.environ.get("DEEPSEEK_API_KEY")
+api_key = cfg.get("llm", {}).get("api_key") or os.environ.get("DEEPSEEK_API_KEY")
 if not api_key:
     print("环境变量 $DEEPSEEK_API_KEY 未设置")
     sys.exit(1)
@@ -63,7 +63,7 @@ client = OpenAI(api_key=api_key, base_url=LLM_API_BASE)
 
 # ── Web 搜索 (Tavily) ──────────────────────────────────
 
-tavily_api_key = os.environ.get("TAVILY_API_KEY")
+tavily_api_key = cfg.get("tavily", {}).get("api_key") or os.environ.get("TAVILY_API_KEY")
 tavily_client = None
 if tavily_api_key:
     try:
