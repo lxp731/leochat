@@ -121,6 +121,13 @@ body {
   color: #fff;
   flex-shrink: 0;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.user-avatar-sidebar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .status-dot {
@@ -320,6 +327,13 @@ body {
   font-weight: 700;
   color: #fff;
   box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.msg-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* Bubble Group */

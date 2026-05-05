@@ -65,4 +65,4 @@ uv run python -m nuitka --standalone --onefile app.py
 
 ## 效果图
 
-![cli-result](./assets/result.png)
+![cli-result](../assets/cli/result.png)

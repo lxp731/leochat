@@ -98,8 +98,17 @@ function appendMsg(msgId, user, text, cls, time) {
   nm.textContent = esc(user);
   const av = document.createElement('div');
   av.className = 'msg-avatar';
-  av.style.background = avColor(user);
-  av.textContent = init(user);
+  const userData = users.get(user);
+  const avatarFile = userData?.avatar || '';
+  if (avatarFile) {
+    const img = document.createElement('img');
+    img.src = `/avatar/${avatarFile}`;
+    img.alt = init(user);
+    av.appendChild(img);
+  } else {
+    av.style.background = avColor(user);
+    av.textContent = init(user);
+  }
   aw.appendChild(nm);
   aw.appendChild(av);
 
@@ -150,15 +159,23 @@ function removeMsgElement(msgId) {
 function updateUL() {
   elements.onlineCount.textContent = `${users.size} 人在线`;
   elements.userList.innerHTML = Array.from(users.values())
-    .map(u => `
+    .map(u => {
+      const hasAvatar = !!(u.avatar);
+      const avatarContent = hasAvatar
+        ? `<img src="/avatar/${esc(u.avatar)}" alt="${esc(u.name)}">`
+        : esc(init(u.name));
+      const avatarStyle = hasAvatar
+        ? ''
+        : `style="background:${avColor(u.name)}"`;
+      return `
       <div class="user-item">
-        <div class="user-avatar-sidebar" style="background:${avColor(u.name)}">${esc(init(u.name))}</div>
+        <div class="user-avatar-sidebar" ${avatarStyle}>${avatarContent}</div>
         <span>${esc(u.name)}</span>
         ${u.sid ? `
           <button class="kick-btn" data-sid="${esc(u.sid)}" title="踢出 ${esc(u.name)}">🚫</button>
         ` : '<span class="status-dot"></span>'}
       </div>
-    `).join('');
+    `}).join('');
 
   // 绑定踢人事件
   elements.userList.querySelectorAll('.kick-btn').forEach(btn => {
@@ -210,7 +227,7 @@ socket.on('disconnect', () => {
 socket.on('message', data => {
   appendMsg(data.id, data.user, data.text, 'msg', data.time);
   if (data.user && data.user !== 'System' && !users.has(data.user)) {
-    users.set(data.user, { name: data.user, sid: '' });
+    users.set(data.user, { name: data.user, sid: '', avatar: data.avatar || '' });
     updateUL();
   }
 });
@@ -235,7 +252,7 @@ socket.on('error', data => showToast(data.text || '发生错误'));
 
 socket.on('userlist', data => {
   users.clear();
-  (data.users || []).forEach(u => users.set(u.name, { name: u.name, sid: u.sid || '' }));
+  (data.users || []).forEach(u => users.set(u.name, { name: u.name, sid: u.sid || '', avatar: u.avatar || '' }));
   updateUL();
 });
 

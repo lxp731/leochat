@@ -123,15 +123,15 @@ docker compose up -d
 
 ### Web 端 (Server)
 
-![server](server/assets/result.png)
+![server](assets/server/result.png)
 
 ### 终端客户端 (CLI)
 
-![cli](cli/assets/result.png)
+![cli](assets/cli/result.png)
 
 ### 移动客户端 (Android)
 
-![android](android/assets/result.png)
+![android](assets/android/result.png)
 
 ## License
 

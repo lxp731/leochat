@@ -32,4 +32,4 @@ Socket.IO 事件协议见项目根目录 [README](../README.md#协议设计)。
 
 ## 效果图
 
-![server-result](./assets/result.png)
+![server-result](../assets/server/result.png)

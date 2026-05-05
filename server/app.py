@@ -4,12 +4,13 @@ Leochat — 轻量实时聊天服务器
 Flask + Socket.IO, 支持速率限制、在线用户列表、环境变量配置、SQLite 持久化。
 """
 import os
+import random
 import time
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 
-from flask import Flask, render_template, request, session, redirect, url_for
+from flask import Flask, render_template, request, session, redirect, url_for, send_from_directory
 from flask_socketio import SocketIO, emit
 
 # ── 环境变量加载 ──────────────────────────────────────────
@@ -44,6 +45,9 @@ RATE_WINDOW = 2          # 速率限制窗口 (秒)
 RATE_MAX = 10            # 窗口内最大消息数 (调大以优化体验)
 
 CST = timezone(timedelta(hours=8))
+
+AVATAR_DIR = os.path.join(os.path.dirname(__file__), '..', 'assets', 'profile_pictures')
+AVATAR_FILES = [f for f in os.listdir(AVATAR_DIR) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.gif', '.webp'))]
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = SECRET_KEY
@@ -109,7 +113,16 @@ init_db()
 _client_timestamps: dict[str, list[float]] = defaultdict(list)
 _sid_to_user: dict[str, str] = {}          # sid → username
 _user_to_sids: dict[str, set[str]] = defaultdict(set)
+_user_avatar: dict[str, str] = {}          # username → avatar filename
 _admin_sids: set[str] = set()              # web 管理后台的 sid，拥有管理权限
+
+
+def _pick_avatar(username: str) -> str:
+    """为用户随机分配头像，尽量不与聊天室内其他人重复"""
+    used = {v for k, v in _user_avatar.items() if k != username}
+    available = [f for f in AVATAR_FILES if f not in used]
+    pool = available if available else AVATAR_FILES
+    return random.choice(pool)
 
 
 def _now_str() -> str:
@@ -118,10 +131,10 @@ def _now_str() -> str:
 
 def _broadcast_userlist() -> None:
     # 所有人收到用户名列表
-    basic = [{"name": u} for u in dict.fromkeys(_sid_to_user.values())]
+    basic = [{"name": u, "avatar": _user_avatar.get(u, "")} for u in dict.fromkeys(_sid_to_user.values())]
     socketio.emit("userlist", {"users": basic})
     # 管理员额外收到 sid（用于踢人）
-    admin_data = [{"name": u, "sid": s} for s, u in _sid_to_user.items()]
+    admin_data = [{"name": u, "sid": s, "avatar": _user_avatar.get(u, "")} for s, u in _sid_to_user.items()]
     for admin_sid in _admin_sids:
         emit("userlist", {"users": admin_data, "admin": True}, to=admin_sid)
 
@@ -158,8 +171,8 @@ def _check_auth():
     # Socket.IO 端点由其事件处理器单独校验
     if request.path.startswith("/socket.io"):
         return None
-    # 允许静态资源和登录页
-    if request.path.startswith("/static/") or request.path == "/login":
+    # 允许静态资源、头像、登录页
+    if request.path.startswith("/static/") or request.path.startswith("/avatar/") or request.path == "/login":
         return None
     # 需要认证
     if WEB_PASSWORD and not session.get("authenticated"):
@@ -183,6 +196,11 @@ def login():
     return render_template("login.html", error=error)
 
 
+@app.route("/avatar/<filename>")
+def avatar(filename):
+    return send_from_directory(AVATAR_DIR, filename)
+
+
 # ── 连接 / 断线 ───────────────────────────────────────────
 @socketio.on("connect")
 def handle_connect(auth=None):
@@ -203,6 +221,7 @@ def handle_disconnect():
         _user_to_sids[username].discard(sid)
         if not _user_to_sids[username]:
             del _user_to_sids[username]
+            _user_avatar.pop(username, None)
             socketio.emit("system", {"text": f"{username} has left the chat."})
         _broadcast_userlist()
     
@@ -239,11 +258,13 @@ def handle_join(data):
 
     if username != old_name:
         save_user(username)
+        _user_avatar[username] = _pick_avatar(username)
         socketio.emit("system", {"text": f"{username} has joined the chat."})
-        
+
         # 推送历史消息给新加入的用户
         history = get_history()
         for msg in history:
+            msg['avatar'] = _user_avatar.get(msg['user'], '')
             emit("message", msg, to=sid)
             
     _broadcast_userlist()
@@ -274,7 +295,7 @@ def handle_message(data):
     msg_id = save_message(user, text, ts)
 
     print(f"[MSG] {user}: {text[:80]}{'…' if len(text) > 80 else ''}")
-    socketio.emit("message", {"id": msg_id, "user": user, "text": text, "time": ts})
+    socketio.emit("message", {"id": msg_id, "user": user, "text": text, "time": ts, "avatar": _user_avatar.get(user, '')})
 
 
 # ── 管理员功能 ────────────────────────────────────────────

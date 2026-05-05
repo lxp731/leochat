@@ -247,6 +247,7 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   late IO.Socket _socket;
   final List<Map<String, dynamic>> _messages = [];
+  final Map<String, String> _userAvatars = {};
   final TextEditingController _msgCtrl = TextEditingController();
   final ScrollController _scrollCtrl = ScrollController();
   bool _connected = false;
@@ -279,14 +280,16 @@ class _ChatScreenState extends State<ChatScreen> {
     _socket.on('message', (data) {
       if (data is Map && mounted) {
         setState(() {
-          // 简单去重，防止重连时收到重复的历史记录
-          final isDuplicate = _messages.any((m) => 
-            m['user'] == data['user'] && 
-            m['text'] == data['text'] && 
+          final isDuplicate = _messages.any((m) =>
+            m['user'] == data['user'] &&
+            m['text'] == data['text'] &&
             m['time'] == data['time']
           );
           if (!isDuplicate) {
             _messages.add(Map<String, dynamic>.from(data));
+          }
+          if (data['user'] != null && data['avatar'] != null && data['avatar'].toString().isNotEmpty) {
+            _userAvatars[data['user'].toString()] = data['avatar'].toString();
           }
         });
         _scrollToBottom();
@@ -296,6 +299,17 @@ class _ChatScreenState extends State<ChatScreen> {
       if (data is Map && mounted) {
         setState(() => _messages.add({'user': 'System', 'text': data['text'], 'isSystem': true}));
         _scrollToBottom();
+      }
+    });
+    _socket.on('userlist', (data) {
+      if (data is Map && mounted) {
+        setState(() {
+          for (final u in (data['users'] as List? ?? [])) {
+            if (u is Map && u['name'] != null && u['avatar'] != null && u['avatar'].toString().isNotEmpty) {
+              _userAvatars[u['name'].toString()] = u['avatar'].toString();
+            }
+          }
+        });
       }
     });
     _socket.connect();
@@ -369,7 +383,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   );
                 }
                 final isMe = msg['user'] == widget.username;
-                return _MessageBubble(message: msg, isMe: isMe);
+                final avatarFile = _userAvatars[msg['user']] ?? '';
+                return _MessageBubble(message: msg, isMe: isMe, avatarUrl: avatarFile);
               },
             ),
           ),
@@ -421,62 +436,94 @@ class _ChatScreenState extends State<ChatScreen> {
 class _MessageBubble extends StatelessWidget {
   final Map<String, dynamic> message;
   final bool isMe;
+  final String avatarUrl;
 
-  const _MessageBubble({required this.message, required this.isMe});
+  const _MessageBubble({required this.message, required this.isMe, this.avatarUrl = ''});
 
   @override
   Widget build(BuildContext context) {
+    final avatar = _buildAvatar();
+    final nameWidget = Padding(
+      padding: EdgeInsets.only(
+        left: isMe ? 0 : 4,
+        right: isMe ? 4 : 0,
+        bottom: 4,
+      ),
+      child: Text(
+        message['user'] ?? 'Unknown',
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54),
+      ),
+    );
+    final bubble = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: isMe ? const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF818CF8)]) : null,
+        color: isMe ? null : Colors.white,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(20),
+          topRight: const Radius.circular(20),
+          bottomLeft: Radius.circular(isMe ? 20 : 0),
+          bottomRight: Radius.circular(isMe ? 0 : 20),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: isMe ? const Color(0xFF6366F1).withOpacity(0.3) : Colors.black.withOpacity(0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
+          )
+        ],
+      ),
+      child: Text(
+        message['text'] ?? '',
+        style: TextStyle(color: isMe ? Colors.white : const Color(0xFF1E293B), fontSize: 16),
+      ),
+    );
+
+    final content = Flexible(
+      child: Column(
+        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [nameWidget, bubble],
+      ),
+    );
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (!isMe) _buildAvatar(),
-          const SizedBox(width: 8),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-              children: [
-                if (!isMe)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 4, bottom: 4),
-                    child: Text(message['user'] ?? 'Unknown', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black54)),
-                  ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    gradient: isMe ? const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF818CF8)]) : null,
-                    color: isMe ? null : Colors.white,
-                    borderRadius: BorderRadius.only(
-                      topLeft: const Radius.circular(20),
-                      topRight: const Radius.circular(20),
-                      bottomLeft: Radius.circular(isMe ? 20 : 0),
-                      bottomRight: Radius.circular(isMe ? 0 : 20),
-                    ),
-                    boxShadow: [
-                      BoxShadow(color: isMe ? const Color(0xFF6366F1).withOpacity(0.3) : Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 5))
-                    ],
-                  ),
-                  child: Text(
-                    message['text'] ?? '',
-                    style: TextStyle(color: isMe ? Colors.white : const Color(0xFF1E293B), fontSize: 16),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+        children: isMe ? [content, const SizedBox(width: 8), avatar] : [avatar, const SizedBox(width: 8), content],
       ),
     );
   }
 
   Widget _buildAvatar() {
     final name = (message['user'] as String?) ?? 'A';
+    if (avatarUrl.isNotEmpty) {
+      return ClipOval(
+        child: Image.network(
+          '$kServerUrl/avatar/$avatarUrl',
+          width: 36,
+          height: 36,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => _fallbackAvatar(name),
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return _fallbackAvatar(name);
+          },
+        ),
+      );
+    }
+    return _fallbackAvatar(name);
+  }
+
+  Widget _fallbackAvatar(String name) {
     return CircleAvatar(
       radius: 18,
       backgroundColor: Color((name.hashCode * 0xFFFFFF).toInt()).withOpacity(1.0).withBlue(200),
-      child: Text(name.substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+      child: Text(
+        name.substring(0, 1).toUpperCase(),
+        style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+      ),
     );
   }
 }
