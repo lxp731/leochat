@@ -4,10 +4,18 @@ Flask + Socket.IO 实时聊天服务器。
 
 ## 启动
 
+开发环境启动：
 ```bash
 cd server
 uv sync
 uv run python app.py
+```
+
+生产环境启动 (Gunicorn + Gevent)：
+```bash
+cd server
+uv sync
+uv run gunicorn -k geventwebsocket.gunicorn.workers.GeventWebSocketWorker -w 1 -b 0.0.0.0:5000 app:app
 ```
 
 服务运行在 `http://0.0.0.0:5000`，浏览器打开即可使用 Web 客户端。

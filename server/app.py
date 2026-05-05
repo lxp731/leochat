@@ -3,6 +3,9 @@ Leochat — 轻量实时聊天服务器
 ─────────────────────────────────
 Flask + Socket.IO, 支持速率限制、在线用户列表、环境变量配置、SQLite 持久化。
 """
+import gevent.monkey
+gevent.monkey.patch_all()
+
 import os
 import random
 import time
