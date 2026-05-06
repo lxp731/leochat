@@ -10,7 +10,7 @@
 curl -fsSL https://raw.githubusercontent.com/lxp731/leochat/main/install.sh | bash
 ```
 
-这会自动下载最新版二进制到 `/usr/local/bin/`，之后直接运行：
+这会自动下载最新版二进制到 `$HOME/.local/bin/`，之后直接运行：
 
 ```bash
 leochat
