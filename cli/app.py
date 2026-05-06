@@ -295,7 +295,8 @@ class ChatClient:
         except:
             term_w = 80
             term_h = 30
-        msg_area_h = max(term_h - 6, 5)
+        # 减去顶部(4) + 分隔线(1) + 输入框(1) + 额外缓冲(1) = 7
+        msg_area_h = max(term_h - 7, 5)
 
         if not msgs:
             return [("class:msg.time", "没有消息...\n")]
@@ -308,9 +309,10 @@ class ChatClient:
         idx = len(msgs) - 1
         while idx >= 0 and remaining > 0:
             m = msgs[idx]
-            # 先用 0 占位宽度粗略估算行数（非 chat 类型不需要对齐）
+            # 先用 0 占位宽度粗略估算行数
             dw, frags = self._format_one(m, 0)
-            dl = math.ceil(dw / max(term_w, 1))
+            # dl = 文本占用的行数 + 消息之间的空行(1)
+            dl = math.ceil(dw / max(term_w, 1)) + 1 
             raw_rows.append((m, dl, frags))
             if m["type"] == "chat":
                 chat_indices.append(len(raw_rows) - 1)
