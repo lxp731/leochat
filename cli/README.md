@@ -4,6 +4,20 @@
 
 ## 快速开始
 
+### 一键安装（推荐）
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/lxp731/leochat/main/install.sh | bash
+```
+
+这会自动下载最新版二进制到 `/usr/local/bin/`，之后直接运行：
+
+```bash
+leochat
+```
+
+### 从源码运行
+
 ```bash
 cd cli
 uv sync
