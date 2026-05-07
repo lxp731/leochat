@@ -9,6 +9,24 @@ name = "小墨"
 # 每次决策时取最近多少条消息作为上下文
 context_size = 100
 
+# ── 拟人聊天节奏控制 ──
+
+# 发言后强制冷却时间（秒），期间不触发任何决策
+cooldown_seconds = 6
+
+# 沉默惰性：消息数门槛 — 必须累积这么多条消息后才开始考虑说话
+silent_msg_threshold = 8
+# 沉默惰性：时间门槛（秒）— 还必须经过这么长时间
+silent_time_threshold = 30
+# 沉默惰性：满足以上两个条件后，每条消息触发决策的概率 (0~1)
+silent_probability = 0.25
+
+# 同一个人连续发言的合并窗口（秒），窗口内同一人的消息会被合并为一条上下文
+same_sender_debounce = 3.0
+
+# IDLE 状态下收到消息后的合批窗口（秒）
+idle_batch_window = 2.0
+
 # LLM 配置
 [llm]
 api_base = "https://api.deepseek.com"
