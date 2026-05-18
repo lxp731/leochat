@@ -4,19 +4,17 @@ Leochat AI Agent — 自主聊天机器人
 使用 DeepSeek API 作为推理后端，以普通用户身份加入聊天室。
 自行判断何时发言、说什么内容，不依附于任何人。
 
-拟人聊天算法 — 四状态状态机：
+拟人聊天算法 — 三状态状态机：
   COOLING ──(6s)──→ IDLE ──(合批窗口)──→ THINKING
     ↑                                       │
-    │        发言                            ├──[SILENT]──→ SILENT
-    └────────────────────────────────────    │              │
-                                            │发言          │条数+时间+概率
-                                            └──────────────┘
+    │        发言                            ├──发言 ──→ COOLING
+    └────────────────────────────────────    │
+                                            └──[SILENT]──→ IDLE (静默冷却)
 同 sender 连续发言会被合并在 3s 窗口内，LLM 看到的是同一个人连续说的话。
 """
 import enum
 import json
 import os
-import random
 import sys
 import time
 import threading
@@ -50,9 +48,7 @@ CONTEXT_SIZE: int = cfg["agent"]["context_size"]
 # ── 拟人节奏参数（从配置文件读取，不硬编码）───────────
 
 COOLDOWN_SECONDS: float = float(cfg["agent"]["cooldown_seconds"])
-SILENT_MSG_THRESHOLD: int = int(cfg["agent"]["silent_msg_threshold"])
-SILENT_TIME_THRESHOLD: float = float(cfg["agent"]["silent_time_threshold"])
-SILENT_PROBABILITY: float = float(cfg["agent"]["silent_probability"])
+SILENT_COOLDOWN_SECONDS: float = float(cfg["agent"]["silent_cooldown_seconds"])
 SAME_SENDER_DEBOUNCE: float = float(cfg["agent"]["same_sender_debounce"])
 IDLE_BATCH_WINDOW: float = float(cfg["agent"]["idle_batch_window"])
 
@@ -145,16 +141,14 @@ def execute_web_search(query: str) -> str:
 
 class AgentState(enum.Enum):
     """
-    四个状态，模拟真人的聊天节奏：
+    三个状态，模拟真人的聊天节奏：
 
     COOLING  — 刚说完话，强制冷却。收到消息只记历史，不决策。
-    IDLE     — 冷却结束，待命。收到消息启动短合批窗口后决策。
-    SILENT   — 上次决策选择了沉默。进入惰性模式，不急于再次决策。
+    IDLE     — 待命。收到消息启动短合批窗口后决策。静默冷却中也不决策。
     THINKING — LLM 正在思考中。收到消息只记历史，不排队新决策。
     """
     COOLING = "cooling"
     IDLE = "idle"
-    SILENT = "silent"
     THINKING = "thinking"
 
 
@@ -164,8 +158,7 @@ _state = AgentState.IDLE
 _state_lock = threading.Lock()          # 保护 _state 及关联时间/计数
 
 _last_speak_time = 0.0                  # 上次发言的时间戳（用于 COOLING 判断）
-_last_decision_time = 0.0               # 上次决策完成的时间戳（用于 SILENT 时间门槛）
-_silent_msg_count = 0                   # SILENT 状态下累积的消息数
+_silent_until = 0.0                     # [SILENT] 后的静默冷却截止时间戳
 
 _force_pending = False                  # THINKING 期间有人 @agent，标记等思考完再决策
 
@@ -286,8 +279,8 @@ def _on_idle_timer():
 def _enter_thinking():
     """
     进入 THINKING 状态，启动 LLM 决策线程。
-    所有触发 LLM 决策的路径（IDLE 窗口到期、SILENT 概率中奖、
-    @mention 强制唤醒）统一走这个入口。
+    所有触发 LLM 决策的路径（IDLE 窗口到期、@mention 强制唤醒、
+    静默冷却到期后的新消息）统一走这个入口。
     """
     with _state_lock:
         # 防止并发进入 — 如果已经在思考就算了
@@ -306,9 +299,9 @@ def _process_incoming(force: bool = False):
     
     根据当前状态决定是否触发 LLM 决策：
     - COOLING：冷却中，不决策
-    - IDLE：启动合批窗口
-    - SILENT：检查惰性条件（条数 + 时间 + 概率）
     - THINKING：已经在思考，不打断
+    - 静默冷却中：不决策，只记历史
+    - IDLE：启动合批窗口
 
     force=True 时（@mention 触发），绕过所有状态直接进 THINKING。
     """
@@ -342,20 +335,9 @@ def _process_incoming(force: bool = False):
         if _state == AgentState.THINKING:
             return
 
-        # ── SILENT：沉默惰性 — 不是每条消息都决策 ──
-        if _state == AgentState.SILENT:
-            _silent_msg_count += 1
-            elapsed = now - _last_decision_time
-
-            # 双重门槛：消息条数 AND 时间都必须达标
-            if _silent_msg_count >= SILENT_MSG_THRESHOLD and elapsed >= SILENT_TIME_THRESHOLD:
-                # 达标后以概率触发 — 不是必触发，更像人
-                if random.random() < SILENT_PROBABILITY:
-                    print(f"[STATE] SILENT → THINKING (msg={_silent_msg_count}, s={elapsed:.0f})")
-                    _enter_thinking()
-                    return
-                # 没中奖：留在 SILENT，下条消息再抽奖
-            return  # 门槛未到或概率没中，继续沉默
+        # ── 静默冷却：[SILENT] 后一段时间内只记历史不决策 ──
+        if now < _silent_until:
+            return
 
         # ── IDLE：待命，启动合批窗口 ──
         if _state == AgentState.IDLE:
@@ -406,7 +388,7 @@ def _do_llm_decision():
     
     决策结果决定后续状态：
     - 发言 → COOLING
-    - [SILENT] → SILENT（重置惰性计数器）
+    - [SILENT] → IDLE（进入静默冷却，期间不决策）
     - 异常 → IDLE（保守回退，等下次消息再试）
     
     如果 _force_pending 为 True（思考期间有人 @），
@@ -467,12 +449,11 @@ def _do_llm_decision():
             is_silent = (reply.upper().startswith("[SILENT]") or reply == "[SILENT]")
 
             if is_silent:
-                # LLM 选择了沉默
+                # LLM 选择了沉默 → 进入静默冷却，期间收到消息只记历史不决策
                 with _state_lock:
-                    _state = AgentState.SILENT
-                    _last_decision_time = time.time()
-                    _silent_msg_count = 0  # 重置惰性计数器
-                print("[STATE] THINKING → SILENT")
+                    _state = AgentState.IDLE
+                    _silent_until = time.time() + SILENT_COOLDOWN_SECONDS
+                print(f"[STATE] THINKING → IDLE (silent cooldown {SILENT_COOLDOWN_SECONDS}s)")
             else:
                 # 清理可能的 [SILENT] 前缀（LLM 有时输出 "[SILENT] 但我想说..."）
                 if reply.startswith("[SILENT]") and len(reply) > 8:
@@ -490,10 +471,9 @@ def _do_llm_decision():
                 else:
                     # 空回复视为沉默
                     with _state_lock:
-                        _state = AgentState.SILENT
-                        _last_decision_time = time.time()
-                        _silent_msg_count = 0
-                    print("[STATE] THINKING → SILENT (empty reply)")
+                        _state = AgentState.IDLE
+                        _silent_until = time.time() + SILENT_COOLDOWN_SECONDS
+                    print(f"[STATE] THINKING → IDLE (silent cooldown {SILENT_COOLDOWN_SECONDS}s, empty reply)")
 
             break  # 决策完成
 
@@ -605,7 +585,8 @@ def on_system(data):
     if isinstance(data, dict):
         line = f"[系统]: {data.get('text', '')}"
         _history.append(line)
-        # 系统消息只记历史，不触发决策
+        # 系统消息（加入/离开等）记历史并触发决策
+        _process_incoming()
 
 
 @sio.on("error")
@@ -619,7 +600,8 @@ def on_announcement(data):
     if isinstance(data, dict) and data.get("text"):
         line = f"[公告]: {data['text']}"
         _history.append(line)
-        # 公告只记历史，不触发决策
+        # 公告记历史并触发决策
+        _process_incoming()
 
 
 # ── 启动 ──────────────────────────────────────────────
@@ -631,7 +613,7 @@ def main():
     print(f"Context: {CONTEXT_SIZE} messages")
     print(f"Personality: {AGENT_DIR / 'IDENTIFY.md'}")
     print(f"Cooldown: {COOLDOWN_SECONDS}s | "
-          f"Silent: {SILENT_MSG_THRESHOLD}msgs/{SILENT_TIME_THRESHOLD}s@{SILENT_PROBABILITY:.0%} | "
+          f"Silent cooldown: {SILENT_COOLDOWN_SECONDS}s | "
           f"Debounce: {SAME_SENDER_DEBOUNCE}s")
     print()
 

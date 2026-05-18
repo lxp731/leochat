@@ -14,12 +14,8 @@ context_size = 100
 # 发言后强制冷却时间（秒），期间不触发任何决策
 cooldown_seconds = 6
 
-# 沉默惰性：消息数门槛 — 必须累积这么多条消息后才开始考虑说话
-silent_msg_threshold = 8
-# 沉默惰性：时间门槛（秒）— 还必须经过这么长时间
-silent_time_threshold = 30
-# 沉默惰性：满足以上两个条件后，每条消息触发决策的概率 (0~1)
-silent_probability = 0.25
+# [SILENT] 后的静默冷却（秒），期间收到消息只记历史不决策
+silent_cooldown_seconds = 5
 
 # 同一个人连续发言的合并窗口（秒），窗口内同一人的消息会被合并为一条上下文
 same_sender_debounce = 3.0
