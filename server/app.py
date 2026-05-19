@@ -627,6 +627,7 @@ def handle_join(data):
             if not avatar:
                 avatar = get_user_avatar(msg['user'])
             msg['avatar'] = avatar
+            msg['history'] = True
             emit("message", msg, to=sid)
             
     _broadcast_userlist()
